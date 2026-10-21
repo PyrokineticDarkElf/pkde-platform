@@ -1,0 +1,14 @@
+# What `composer install` puts into web/app/mu-plugins/pkde-platform/ on a site. That directory is inside the docroot, so nothing that
+# is not code may ship: tests, docs, CI and tooling are left out of the dist archive (GitHub's zipball honours export-ignore).
+/tests export-ignore
+/docs export-ignore
+/.github export-ignore
+/bin export-ignore
+/.gitattributes export-ignore
+/.gitignore export-ignore
+/phpunit.xml export-ignore
+/pint.json export-ignore
+/README.md export-ignore
+/CHANGELOG.md export-ignore
+/composer.lock export-ignore
+/composer.json export-ignore
