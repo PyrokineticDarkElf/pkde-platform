@@ -65,7 +65,7 @@ add_action('admin_notices', function () {
     if (current_user_can('manage_options') && cf7_test_copy_active($until, time())) {
         printf(
             '<div class="notice notice-warning"><p>%s</p></div>',
-            esc_html(sprintf('CF7 test copy active until %s: every form mail is also sent to %s.', wp_date('H:i', (int) $until), get_option('admin_email'))),
+            esc_html(sprintf(__('CF7 test copy active until %s: every form mail is also sent to %s.', 'pkde-text'), wp_date('H:i', (int) $until), get_option('admin_email'))),
         );
     }
 });
