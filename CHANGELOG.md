@@ -1,8 +1,10 @@
 # Changelog
 
-## Unreleased
+## 2026.10.23
 
-- `composer.json` pins `config.platform.php` to 8.3.0 (dev installs only). No code change, so no release.
+- Hotfix (MGR-53): `post-smtp-env` could leave Post SMTP without a From address, and Post SMTP 4.0.2 then marks its transport "not ready" (jsd production). The sender is now the first valid email address of `SMTP_FROM`, `SMTP_USERNAME`, `POST_SMTP_AUTH_USERNAME` (the names are read from the constants, then the environment).
+- An admin notice (and one `error_log` line a day) says so when `SMTP_HOST` is set but no usable From exists, and when `SMTP_HOST` is not set on a `WP_ENV=production` site (mail would leave the web server unauthenticated). Strings go through gettext (`pkde-text`). Pest cases cover the sender chain and each notice condition.
+- `composer.json` pins `config.platform.php` to 8.3.0 (dev installs only).
 
 ## 2026.10.22
 
