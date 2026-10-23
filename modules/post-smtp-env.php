@@ -31,6 +31,14 @@ function post_smtp_sender(array $candidates): string
     return '';
 }
 
+/** The wanted values that the stored option does not hold yet (compared as strings, so 465 equals '465'); [] when it is up to date. */
+function post_smtp_env_stale(array $wanted, mixed $stored): array
+{
+    $stored = is_array($stored) ? $stored : [];
+
+    return array_filter($wanted, fn($value, $key) => ! array_key_exists($key, $stored) || (string) $stored[$key] !== (string) $value, ARRAY_FILTER_USE_BOTH);
+}
+
 /** 'no-from' (host set, no usable From), 'no-host' (production without SMTP_HOST) or null (nothing to report). */
 function post_smtp_env_problem(string $host, string $from, string $environment): ?string
 {
@@ -70,6 +78,9 @@ $overlay = function ($options) use ($setting, $sender) {
         'port' => (int) ($setting('SMTP_PORT') ?: 465),
         'enc_type' => in_array($encryption, ['ssl', 'tls', 'none'], true) ? $encryption : 'ssl',
         'sender_email' => $sender(),
+        // Post SMTP 4 also wants the envelope sender ("Envelope-From Email Address can not be empty") before it calls the SMTP
+        // transport ready; without it the active transport falls back to Default (the web server's local mail).
+        'envelope_sender' => $sender(),
         // Post SMTP's "prevent plugins and themes changing this": 20i refuses mail whose From is
         // WordPress's or Contact Form 7's default (wordpress@host) instead of the mailbox.
         'prevent_sender_email_override' => 1,
@@ -82,6 +93,24 @@ $overlay = function ($options) use ($setting, $sender) {
 // `option_` runs only when the option is stored; `default_option_` covers a site that has never saved one.
 add_filter('option_postman_options', $overlay);
 add_filter('default_option_postman_options', $overlay);
+
+// Belt and braces: also keep the non-secret values in the stored option, so anything that reads the raw row (or runs before this
+// file) sees them, and the Post SMTP screen shows what is in force. Written only when the row differs, never on every request. The
+// password is NOT here: it stays a constant (POST_SMTP_AUTH_PASSWORD) and never reaches the database.
+add_action('plugins_loaded', function () use ($overlay) {
+    remove_filter('option_postman_options', $overlay);
+    remove_filter('default_option_postman_options', $overlay);
+
+    $wanted = $overlay([]);
+    $stored = get_option('postman_options');
+
+    if ($wanted && post_smtp_env_stale($wanted, $stored)) {
+        update_option('postman_options', array_merge(is_array($stored) ? $stored : [], $wanted));
+    }
+
+    add_filter('option_postman_options', $overlay);
+    add_filter('default_option_postman_options', $overlay);
+}, 0);
 
 $problem = fn() => post_smtp_env_problem($setting('SMTP_HOST'), $sender(), defined('WP_ENV') ? (string) WP_ENV : (string) wp_get_environment_type());
 

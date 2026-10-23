@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026.10.23.1
+
+- Hotfix (MGR-53), the real cause: Post SMTP 4 only calls its SMTP transport ready when the **envelope sender** is set too ("Envelope-From Email Address can not be empty"), and the overlay did not fill `envelope_sender`. With an empty stored `postman_options` row (a site where the Post SMTP wizard never ran, such as jsd staging) the active transport silently fell back to `PostmanDefaultModuleTransport` (`smtp:none:none://localhost:25`, the web server's local mail) although every other value was in force. The overlay now sets `envelope_sender` to the sender. Reproduced and verified locally with an empty stored row and a Mailpit SMTP server with login auth: before, the active transport is Default and nothing is delivered; after, it is Smtp and the test mail arrives.
+- Belt and braces: with `SMTP_HOST` set, the non-secret values (transport, auth type, host, port, encryption, sender, envelope sender, sender name, sender-override lock) are also written into the stored `postman_options` on `plugins_loaded` (priority 0), only when the stored row differs, so nothing that reads the raw row misses them and the Post SMTP screen shows what is in force. The password is never stored: it stays the `POST_SMTP_AUTH_PASSWORD` constant.
+
 ## 2026.10.23
 
 - Hotfix (MGR-53): `post-smtp-env` could leave Post SMTP without a From address, and Post SMTP 4.0.2 then marks its transport "not ready" (jsd production). The sender is now the first valid email address of `SMTP_FROM`, `SMTP_USERNAME`, `POST_SMTP_AUTH_USERNAME` (the names are read from the constants, then the environment).
