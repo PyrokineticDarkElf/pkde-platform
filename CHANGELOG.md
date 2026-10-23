@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- `composer.json` pins `config.platform.php` to 8.3.0 (dev installs only). No code change, so no release.
+
 ## 2026.10.22
 
 - Fix: `cf7-assets-on-demand` logged its "no opt-in" notice on pages whose content has the form. A Sage/Blade view renders before its layout, so the form renders before `wp_enqueue_scripts` has run (Contact Form 7 has not registered its handles yet, so an enqueue then is dropped). The safety net now waits for that action and only enqueues late, and logs, when the page really did not opt in. Pest cases cover the decision.
