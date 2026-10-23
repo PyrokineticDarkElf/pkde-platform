@@ -32,6 +32,7 @@ function modules(): array
         'google-tag-manager',
         'hide-wp-version',
         'local-business-schema',
+        'login-slug',
         'mailpit-smtp',
         'post-smtp-env',
         'private-usernames',

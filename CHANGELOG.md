@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026.10.23.2
+
+- New module `login-slug` (MGR-54): the login slug is the same on staging and production. With `LOGIN_SLUG` set in `.env` (the template's `config/application.php` defines the constant), it answers every read of WPS Hide Login's `whl_page` option (`pre_option_whl_page`), a save of another value is ignored with a notice (Settings > General says the URL is managed in `.env`, and the field is read-only), and the stored row is never written. An unusable value (empty after cleaning, or containing `wp-login`) is ignored with an admin error. Unset = nothing changes. Verified locally with the real plugin: the stored row stays `stored-old`, the effective slug is the constant, `/<constant>/` is the login, the old slug and `wp-login.php` are 404, and a save attempt changes nothing. Pest cases cover the cleaning.
+
 ## 2026.10.23.1
 
 - Hotfix (MGR-53), the real cause: Post SMTP 4 only calls its SMTP transport ready when the **envelope sender** is set too ("Envelope-From Email Address can not be empty"), and the overlay did not fill `envelope_sender`. With an empty stored `postman_options` row (a site where the Post SMTP wizard never ran, such as jsd staging) the active transport silently fell back to `PostmanDefaultModuleTransport` (`smtp:none:none://localhost:25`, the web server's local mail) although every other value was in force. The overlay now sets `envelope_sender` to the sender. Reproduced and verified locally with an empty stored row and a Mailpit SMTP server with login auth: before, the active transport is Default and nothing is delivered; after, it is Smtp and the test mail arrives.

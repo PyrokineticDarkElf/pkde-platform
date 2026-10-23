@@ -62,11 +62,21 @@ invalid). Skipped on non-public sites (local, staging). It runs at priority 99, 
 (priority 10, which replaces the whole file), so editing robots.txt in Rank Math keeps the line. A physical
 `web/robots.txt` file would bypass WordPress and this.
 
+## `login-slug.php` — the same login URL on staging and production
+
+WPS Hide Login keeps its slug in the `whl_page` option, which the two databases never share. With `LOGIN_SLUG` set in `.env`
+(`config/application.php` defines the constant) that value answers every read of `whl_page` (the stored row is not touched), a save of
+a different value is ignored with a notice on Settings > General, and the field is read-only. An unusable value (empty after
+`sanitize_title_with_dashes`, or containing `wp-login`) is ignored with an admin error. Unset = nothing changes. Roll-out per site: copy
+production's current `whl_page` into `LOGIN_SLUG` in both `shared/.env` files on the server without printing it (launch guide). The drift
+check row "Login slug managed by .env" never prints the value.
+
 ## `post-smtp-env.php` — all Post SMTP settings from .env
 
 Post SMTP stores host, port, encryption and sender in the `postman_options` option; only the login can come from
 constants. This overlays `SMTP_HOST`, `SMTP_PORT` (465), `SMTP_ENCRYPTION` (`ssl`/`tls`/`none`, bad value = `ssl`),
-`SMTP_FROM` (defaults to `SMTP_USERNAME`) and `SMTP_FROM_NAME` onto that option (plus `prevent_sender_email_override`, so
+`SMTP_FROM` (the first valid address of `SMTP_FROM`, `SMTP_USERNAME`, `POST_SMTP_AUTH_USERNAME`; it fills both the sender and the
+**envelope sender**, without which Post SMTP 4 silently falls back to its Default transport) and `SMTP_FROM_NAME` onto that option (plus `prevent_sender_email_override`, so
 WordPress and Contact Form 7 cannot swap the From address for `wordpress@host`, which 20i refuses), on both the `option_` and
 `default_option_` filters. The plugin itself is required in `composer.json` but left inactive by `bin/setup` (a site activates it at launch). Nothing happens unless `SMTP_HOST` is set, so local Mailpit (`mailpit-smtp.php`, `MAIL_*`)
 is untouched. The Post SMTP settings screen shows these values and they always win. Details and the 20i values:
