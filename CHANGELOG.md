@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026.10.26
+
+- New module `wordfence-local-dns` (bb, local stacks only): Wordfence's per-request DNS lookup of `localhost:PORT` (its host pattern keeps the port) took about 2.2 s on every local page and was never cached. The module seeds Wordfence's `serverDNS` cache entry with a far-future timestamp and `127.0.0.1` when `WP_ENVIRONMENT_TYPE` is `local` and the entry is missing or expired. Local pages: 2.1 to 3.5 s before, 0.07 to 0.12 s after, on the template's dev stack. No effect on staging or production. Pest cases cover the entry format and the stale rule.
+
 ## 2026.10.23.2
 
 - New module `login-slug` (MGR-54): the login slug is the same on staging and production. With `LOGIN_SLUG` set in `.env` (the template's `config/application.php` defines the constant), it answers every read of WPS Hide Login's `whl_page` option (`pre_option_whl_page`), a save of another value is ignored with a notice (Settings > General says the URL is managed in `.env`, and the field is read-only), and the stored row is never written. An unusable value (empty after cleaning, or containing `wp-login`) is ignored with an admin error. Unset = nothing changes. Verified locally with the real plugin: the stored row stays `stored-old`, the effective slug is the constant, `/<constant>/` is the login, the old slug and `wp-login.php` are 404, and a save attempt changes nothing. Pest cases cover the cleaning.

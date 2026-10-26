@@ -105,3 +105,13 @@ While the option `pkde_cf7_test_until` (a unix timestamp) is in the future, Cont
 go as a `Bcc` to `admin_email`; the option is deleted after it expires and a wp-admin notice shows while it is on.
 Commands (on for an hour, off) are in [`bin/docs/contact-form.md`](../../../bin/docs/contact-form.md#test-copy-on-a-live-site).
 The active/Bcc logic is pure and has a Pest test (`tests/Feature/Cf7TestCopyTest.php`).
+
+## `wordfence-local-dns.php` — fast pages on a local stack
+
+Local only (`WP_ENVIRONMENT_TYPE=local`). Wordfence calls `dns_get_record()` on the home host on every request, and its host pattern keeps
+the port, so with `WP_HOME=http://localhost:8092` it looks up `localhost:8092`, which never resolves (about a second, twice, never cached): every
+local page took about 2.2 s. The module seeds Wordfence's own cache entry (`serverDNS`, `timestamp;ttl;ip` with a timestamp ten years ahead and
+`127.0.0.1`) when it is missing or expired, so the lookups stop; the first request after a fresh database still pays once. Measured on the
+template's dev stack: 2.1 to 3.5 s before, 0.07 to 0.12 s after, the same as with Wordfence deactivated. Nothing happens on staging or
+production (no port in their home URL, a real name), or when Wordfence is not active.
+

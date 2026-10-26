@@ -38,6 +38,7 @@ function modules(): array
         'private-usernames',
         'safe-svg',
         'staging-mail-guard',
+        'wordfence-local-dns',
     ];
 }
 
