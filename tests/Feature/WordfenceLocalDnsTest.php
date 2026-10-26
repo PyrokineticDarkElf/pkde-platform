@@ -20,12 +20,12 @@ it('treats a missing, malformed or expired entry as stale and its own fresh entr
         ->and(wordfence_local_dns_stale(null, $now))->toBeTrue()
         ->and(wordfence_local_dns_stale('', $now))->toBeTrue()
         ->and(wordfence_local_dns_stale('not an entry', $now))->toBeTrue()
-        ->and(wordfence_local_dns_stale('1000000000;3600;127.0.0.9', $now))->toBeTrue()
+        ->and(wordfence_local_dns_stale('1000000000;3600;127.0.0.1', $now))->toBeTrue()
         ->and(wordfence_local_dns_stale(wordfence_local_dns_value($now), $now))->toBeFalse()
         ->and(wordfence_local_dns_stale(wordfence_local_dns_value($now), $now + 86400 * 365))->toBeFalse();
 });
 
 it('applies Wordfence\'s rule that the larger of the ttl and one day counts', function () {
-    expect(wordfence_local_dns_stale('1000;10;127.0.0.9', 1000 + 86399))->toBeFalse()
-        ->and(wordfence_local_dns_stale('1000;10;127.0.0.9', 1000 + 86400))->toBeTrue();
+    expect(wordfence_local_dns_stale('1000;10;127.0.0.1', 1000 + 86399))->toBeFalse()
+        ->and(wordfence_local_dns_stale('1000;10;127.0.0.1', 1000 + 86400))->toBeTrue();
 });
