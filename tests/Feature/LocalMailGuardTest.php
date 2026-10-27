@@ -12,11 +12,11 @@ const LIVE_POSTMAN_OPTIONS = [
     'hostname' => 'smtp.live-host.test',
     'port' => 465,
     'basic_auth_username' => 'owner@live-host.test',
-    'basic_auth_password' => 'c2VjcmV0LXBhc3M=',
+    'basic_auth_password' => 'live-password-value',
     'sender_email' => 'owner@live-host.test',
     'envelope_sender' => 'owner@live-host.test',
-    'oauth_client_secret' => 'live-oauth-secret',
-    'sendgrid_api_key' => 'SG.live-key',
+    'oauth_client_secret' => 'live-oauth-value',
+    'sendgrid_api_key' => 'live-api-value',
 ];
 
 /**

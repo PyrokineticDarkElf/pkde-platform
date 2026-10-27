@@ -1,0 +1,2 @@
+# A fictional fixture value in an earlier commit (a made-up base64 string in a test), not a credential.
+3e44bc03f247d2efce77d18e2b79e315e8ec0482:tests/Feature/LocalMailGuardTest.php:generic-api-key:15
