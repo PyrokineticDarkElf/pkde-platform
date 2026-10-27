@@ -20,7 +20,7 @@ site). Bedrock's autoloader includes `pkde-platform.php`, which requires every m
 ## Modules
 
 `cf7-assets-on-demand`, `cf7-test-copy`, `coming-soon`, `content-signal`, `disable-comments`, `google-tag-manager`, `hide-wp-version`,
-`local-business-schema`, `login-slug`, `mailpit-smtp`, `phone-e164`, `post-smtp-env`, `private-usernames`, `safe-svg`, `staging-mail-guard`, `wordfence-local-dns`. What each does:
+`local-business-schema`, `local-mail-guard`, `login-slug`, `mailpit-smtp`, `phone-e164`, `post-smtp-env`, `private-usernames`, `safe-svg`, `staging-mail-guard`, `wordfence-local-dns`. What each does:
 `docs/modules.md` and `docs/private-usernames.md` (these docs are not installed on sites).
 
 Switch one off on a site: `PKDE_PLATFORM_DISABLE=google-tag-manager,safe-svg` (environment variable or a constant in

@@ -21,7 +21,7 @@ add_filter('robots_txt', function ($output, $public) {
         return $output;
     }
 
-    $value = defined('CONTENT_SIGNAL') ? trim((string) CONTENT_SIGNAL) : '';
+    $value = trim(\Pkde\Platform\setting('CONTENT_SIGNAL'));
     // Anything that is not a comma list of search / ai-input / ai-train = yes|no falls back to the default.
     $signal = "(?:search|ai-input|ai-train)=(?:yes|no)";
     $line = 'Content-Signal: ' . (preg_match("/^$signal(?:\s*,\s*$signal)*$/", $value) ? $value : CONTENT_SIGNAL_DEFAULT);

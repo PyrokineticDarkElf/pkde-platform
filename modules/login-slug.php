@@ -28,9 +28,10 @@ if (! function_exists('add_filter')) {
     return;
 }
 
-$loginSlug = defined('LOGIN_SLUG') ? login_slug_clean((string) LOGIN_SLUG, 'sanitize_title_with_dashes') : '';
+$loginSlugRaw = \Pkde\Platform\setting('LOGIN_SLUG');
+$loginSlug = $loginSlugRaw !== '' ? login_slug_clean($loginSlugRaw, 'sanitize_title_with_dashes') : '';
 
-if (defined('LOGIN_SLUG') && (string) LOGIN_SLUG !== '' && $loginSlug === '') {
+if ($loginSlugRaw !== '' && $loginSlug === '') {
     add_action('admin_notices', function () {
         if (current_user_can('manage_options')) {
             printf('<div class="notice notice-error"><p>%s</p></div>', esc_html__('LOGIN_SLUG in the .env file is not usable as a login slug (empty after cleaning, or it contains wp-login), so it is ignored.', 'pkde-text'));

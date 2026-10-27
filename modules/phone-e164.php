@@ -113,7 +113,7 @@ if (! function_exists('add_filter')) {
     return;
 }
 
-$defaultRegion = class_exists(PhoneNumberUtil::class) && defined('PHONE_DEFAULT_REGION') ? phone_region((string) PHONE_DEFAULT_REGION) : '';
+$defaultRegion = class_exists(PhoneNumberUtil::class) ? phone_region(\Pkde\Platform\setting('PHONE_DEFAULT_REGION')) : '';
 
 if ($defaultRegion === '') {
     return; // opt-in: PHONE_DEFAULT_REGION is not set (or not a region)
@@ -270,7 +270,7 @@ add_action('wp_footer', function () use ($defaultRegion) {
 
     $config = [
         'region' => strtolower($defaultRegion),
-        'preferred' => phone_preferred_countries(defined('PHONE_PREFERRED_COUNTRIES') ? (string) PHONE_PREFERRED_COUNTRIES : '', $defaultRegion),
+        'preferred' => phone_preferred_countries(\Pkde\Platform\setting('PHONE_PREFERRED_COUNTRIES'), $defaultRegion),
     ];
 
     printf('<script>window.pkdePhone=%s;</script>' . "\n", wp_json_encode($config));

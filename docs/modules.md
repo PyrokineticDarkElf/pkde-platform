@@ -123,3 +123,17 @@ Google Ads Enhanced Conversions matches a conversion by the visitor's phone, whi
 * **WooCommerce** (only when it is active): classic checkout (`woocommerce_after_checkout_validation` error, `woocommerce_checkout_posted_data` rewrite), the checkout block (`woocommerce_store_api_checkout_update_order_from_request`: the order is stored with E.164 or the request fails with the message), and My Account > Addresses (`woocommerce_after_save_address_validation`, `woocommerce_process_myaccount_field_*_phone`), for the billing and shipping phone, read in the address form's country.
 * **Browser half:** `window.pkdePhone = {region, preferred}` is printed in the footer only where Contact Form 7's script is (the cf7-assets-on-demand rule); the kit's `phone.js` does nothing without it.
 
+## `local-mail-guard.php` — local mail always goes to Mailpit
+
+With `WP_ENV=development` every read of Post SMTP's `postman_options` answers a fresh Mailpit option, whatever the database holds, so a live import cannot send real mail; PHPMailer is also pointed at Mailpit at priority 999. No `MAIL_HOST` = every message is dropped (logged). Staging and production are untouched (`staging-mail-guard.php` covers staging).
+
+## After importing a live database
+
+A live import into a local or staging database brings live state. `local-mail-guard` and `staging-mail-guard` stop the mail; the rest is a scrub, done once per import, before anyone clicks Send:
+
+1. **Post SMTP:** delete the `postman_options` row and empty the Post SMTP log (`wp option delete postman_options`; the log is the `postman_sent_mail` posts). Local never needs it (the guard supplies Mailpit).
+2. **Contact Form 7:** point each form's recipient at a test address, and remove the reCAPTCHA / Turnstile site and secret keys (they are bound to the live domain).
+3. **WooCommerce:** set every email recipient (New order, Cancelled, Failed, plus the admin address in WooCommerce > Settings > Emails) to a test address; put the payment gateway in test mode with test keys only (Stripe: delete the live keys).
+4. **Newsletter plugins:** switch off MailPoet, Sender and any other plugin that sends on its own schedule.
+5. Never print a key to check it: test with booleans (`is set`, `is empty`).
+

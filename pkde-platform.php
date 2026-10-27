@@ -32,6 +32,7 @@ function modules(): array
         'google-tag-manager',
         'hide-wp-version',
         'local-business-schema',
+        'local-mail-guard',
         'login-slug',
         'mailpit-smtp',
         'phone-e164',
@@ -65,6 +66,26 @@ function module_file(string $name, string $dir = __DIR__ . '/modules'): ?string
     }
 
     return null;
+}
+
+/**
+ * A site setting by name: the constant when config/application.php defined it, else the .env value (Bedrock's dotenv fills $_ENV; getenv() and
+ * Bedrock's env() are tried after), '' when it is set nowhere. A package bump plus one .env line is enough: a site does not have to port
+ * the template's Config::define lines for it.
+ */
+function setting(string $name): string
+{
+    if (defined($name)) {
+        return (string) constant($name);
+    }
+
+    $value = $_ENV[$name] ?? $_SERVER[$name] ?? getenv($name);
+
+    if ($value === false && function_exists('env')) {
+        $value = env($name);
+    }
+
+    return is_string($value) ? $value : '';
 }
 
 function boot(): void

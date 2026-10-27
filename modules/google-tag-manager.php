@@ -12,7 +12,7 @@ namespace App\MuPlugins;
 
 function gtm_container_id(): string
 {
-    $id = defined('GTM_CONTAINER_ID') ? (string) GTM_CONTAINER_ID : '';
+    $id = \Pkde\Platform\setting('GTM_CONTAINER_ID');
 
     return preg_match('/^GTM-[A-Z0-9]+$/', $id) && wp_get_environment_type() === 'production' ? $id : '';
 }

@@ -87,7 +87,7 @@ it('wires the Contact Form 7 and WooCommerce hooks, only when the module is swit
         expect($source)->toContain("'$hook'");
     }
 
-    expect($source)->toContain("defined('PHONE_DEFAULT_REGION')")
+    expect($source)->toContain("setting('PHONE_DEFAULT_REGION')")
         ->and($source)->toContain("defined('WPCF7_VERSION')")
         ->and($source)->toContain("class_exists('WooCommerce')")
         ->and(file_get_contents(dirname(__DIR__, 2) . '/composer.json'))->toContain('giggsey/libphonenumber-for-php-lite');

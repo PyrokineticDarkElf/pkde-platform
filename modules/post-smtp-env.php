@@ -55,13 +55,7 @@ if (! function_exists('add_filter')) {
 
 // Constants come from .env via config/application.php (Bedrock's dotenv does not use getenv()); the environment arrays are a fallback
 // for the name config/application.php does not define as a constant (SMTP_USERNAME).
-$setting = function (string $name): string {
-    if (defined($name)) {
-        return (string) constant($name);
-    }
-
-    return (string) ($_ENV[$name] ?? $_SERVER[$name] ?? '');
-};
+$setting = fn(string $name): string => \Pkde\Platform\setting($name);
 
 $sender = fn() => post_smtp_sender([$setting('SMTP_FROM'), $setting('SMTP_USERNAME'), $setting('POST_SMTP_AUTH_USERNAME')]);
 
