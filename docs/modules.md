@@ -115,3 +115,11 @@ local page took about 2.2 s. The module seeds Wordfence's own cache entry (`serv
 template's dev stack: 2.1 to 3.5 s before, 0.07 to 0.12 s after, the same as with Wordfence deactivated. Nothing happens on staging or
 production (no port in their home URL, a real name), or when Wordfence is not active.
 
+## `phone-e164.php` — phone numbers as E.164 (opt-in)
+
+Google Ads Enhanced Conversions matches a conversion by the visitor's phone, which must be E.164 (`+447912345678`); Contact Form 7 and WooCommerce only check the characters. Switched on by `PHONE_DEFAULT_REGION` in `.env` (an ISO 3166-1 alpha-2 code such as `GB`; `config/application.php` defines the constant; unset or invalid = nothing happens); `PHONE_PREFERRED_COUNTRIES` (comma separated, optional) lists the countries the browser's picker shows first. The parsing is `giggsey/libphonenumber-for-php-lite` (this package requires it): `App\MuPlugins\phone_e164($raw, $region): ?string` returns E.164 or null; the number's own `+` and code always win over a region.
+
+* **Contact Form 7** (only when it is active): `wpcf7_validate_tel` and `tel*` after CF7's own check (an invalid number gets an inline error naming the country it tried; an empty value passes), `wpcf7_posted_data` rewrites each tel field to E.164 so the mail shows it, and `wpcf7_feedback_response` adds `pkde_user_data` (phone and email) to the response of a SENT form, which the kit's `phone.js` pushes to the data layer as `generate_lead`. The region is the hidden `<field>-country` the picker sends, else the default.
+* **WooCommerce** (only when it is active): classic checkout (`woocommerce_after_checkout_validation` error, `woocommerce_checkout_posted_data` rewrite), the checkout block (`woocommerce_store_api_checkout_update_order_from_request`: the order is stored with E.164 or the request fails with the message), and My Account > Addresses (`woocommerce_after_save_address_validation`, `woocommerce_process_myaccount_field_*_phone`), for the billing and shipping phone, read in the address form's country.
+* **Browser half:** `window.pkdePhone = {region, preferred}` is printed in the footer only where Contact Form 7's script is (the cf7-assets-on-demand rule); the kit's `phone.js` does nothing without it.
+

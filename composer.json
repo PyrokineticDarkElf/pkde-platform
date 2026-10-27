@@ -6,7 +6,8 @@
   "require": {
     "php": ">=8.3",
     "composer/installers": "^2.0",
-    "enshrined/svg-sanitize": "^1.0"
+    "enshrined/svg-sanitize": "^1.0",
+    "giggsey/libphonenumber-for-php-lite": "^9.0"
   },
   "require-dev": {
     "laravel/pint": "^1.0",

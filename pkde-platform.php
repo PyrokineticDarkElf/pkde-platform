@@ -34,6 +34,7 @@ function modules(): array
         'local-business-schema',
         'login-slug',
         'mailpit-smtp',
+        'phone-e164',
         'post-smtp-env',
         'private-usernames',
         'safe-svg',

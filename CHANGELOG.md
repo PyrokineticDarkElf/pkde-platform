@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026.10.27
+
+- New opt-in module `phone-e164` (TPL-77, manager MGR-35): every Contact Form 7 `[tel]` field and the WooCommerce billing and shipping phone (classic checkout, checkout block, My Account addresses) is validated with libphonenumber and stored and mailed as E.164, for Google Ads Enhanced Conversions. Switched on by `PHONE_DEFAULT_REGION` in `.env` (blank = nothing happens); the number's own `+` and country code win, then the country the visitor picked (CF7: a hidden `<field>-country` from the kit's picker; WooCommerce: the address form's country), then the default. An invalid number is rejected with a message that names the country it tried. After a sent CF7 form the response carries `pkde_user_data` (phone and email) for the kit's data-layer push. Requires `giggsey/libphonenumber-for-php-lite` (^9.0; 9.0.41 locked in tests). Pest cases cover valid and invalid UK and international numbers, the region choice, the empty value, the message and the preferred countries.
+- Hooks verified over HTTP and in Chrome with Contact Form 7 and WooCommerce 11.2.1 (see the template's `bin/docs/phone-e164.md`).
+
 ## 2026.10.26
 
 - New module `wordfence-local-dns` (bb, local stacks only): Wordfence's per-request DNS lookup of `localhost:PORT` (its host pattern keeps the port) took about 2.2 s on every local page and was never cached. The module seeds Wordfence's `serverDNS` cache entry with a far-future timestamp and `127.0.0.1` when `WP_ENVIRONMENT_TYPE` is `local` and the entry is missing or expired. Local pages: 2.1 to 3.5 s before, 0.07 to 0.12 s after, on the template's dev stack. No effect on staging or production. Pest cases cover the entry format and the stale rule.
