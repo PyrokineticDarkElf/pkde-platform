@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026.10.28.2
+
+- `local-mail-guard` also removes live-capable payment gateways from checkout when `WP_ENV=development` (manager, TPL-128). WooCommerce Stripe was already forced into test mode at runtime (settings filter, no database writes: `testmode=yes`, every non-`test_` key, secret, token and webhook secret blanked); now `woocommerce_available_payment_gateways` (priority 999) drops every gateway that is neither offline (`bacs`, `cheque`, `cod`) nor reporting test mode (`testmode` or `sandbox` = yes/1/true/on), so a live PayPal, WooPayments or Square setup in an imported database cannot take a payment from a local site. Pest cases cover the rule and the filter run with stub gateways. Staging and production are untouched. **Adopt:** nothing; a bump is enough. A gateway that keeps its test flag under another name is dropped (safe side): say so and it is added.
+
 ## 2026.10.28.1
 
 - `local-mail-guard` also answers the rest of the live state a database import brings, at runtime and without writing to the database (MGR-61 scope, from js and bb; TPL-128). With `WP_ENV=development`: the site admin email (`admin_email`, `new_admin_email`) and the WooCommerce new/cancelled/failed order recipients and every Contact Form 7 recipient become `LOCAL_TEST_EMAIL` (default `local-test@example.com`); WooCommerce Stripe settings are forced into test mode with every key, secret, token and webhook secret blanked except the `test_` ones (so a live key can never charge a card); requests to Mailchimp, Sender, Brevo/Sendinblue, Klaviyo, MailerLite and HubSpot are refused with a WP_Error. These apply even without `MAIL_HOST`. Staging and production are untouched. The stored values stay in the database, so the scrub in `docs/modules.md` is still done; this makes a forgotten step harmless. Pest cases cover the Stripe blanking, the host list, and the whole module run in a fresh process with live-like values. **Adopt:** nothing; a bump is enough.

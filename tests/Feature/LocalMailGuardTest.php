@@ -3,6 +3,7 @@
 require_once dirname(__DIR__, 2) . '/modules/local-mail-guard.php';
 
 use function App\MuPlugins\local_blocked_host;
+use function App\MuPlugins\local_gateway_allowed;
 use function App\MuPlugins\local_mail_options;
 use function App\MuPlugins\local_stripe_settings;
 
@@ -47,6 +48,9 @@ function run_local_mail_guard(array $constants, array $env = []): array
             "sender_blocked" => isset($hooks["pre_http_request"]) ? $hooks["pre_http_request"][0][0](false, [], "https://api.sender.net/v2/subscribers") instanceof WP_Error : null,
             "stripe_http" => isset($hooks["pre_http_request"]) ? $hooks["pre_http_request"][0][0](false, [], "https://api.stripe.com/v1/charges") : null,
         ];
+        class Gw { function __construct(public $testmode = "", public $opts = []) {} function get_option($k) { return $this->opts[$k] ?? ""; } }
+        $gws = ["bacs" => new Gw(), "cod" => new Gw(), "stripe" => new Gw("yes"), "paypal" => new Gw("", ["testmode" => "no"]), "ppcp" => new Gw("", ["sandbox" => "yes"]), "woocommerce_payments" => new Gw(), "square" => new Gw("no")];
+        $extra["gateways"] = isset($hooks["woocommerce_available_payment_gateways"]) ? array_keys($hooks["woocommerce_available_payment_gateways"][999][0]($gws)) : null;
         $mail = isset($hooks["pre_wp_mail"]) ? $hooks["pre_wp_mail"][0][0]() : "not hooked";
         echo json_encode(["extra" => $extra, "options" => $answer, "mail" => $mail, "hooks" => array_keys($hooks)]);
     ');
@@ -139,4 +143,21 @@ it('blanks every Stripe key, secret, token and webhook except the test ones, and
 
     expect($out)->toBe(['testmode' => 'yes', 'publishable_key' => '', 'secret_key' => '', 'webhook_secret' => '', 'token' => '', 'test_publishable_key' => 'e', 'title' => 'Card'])
         ->and(local_stripe_settings(false))->toBeFalse();
+});
+
+it('keeps only offline gateways and gateways in test mode at checkout', function () {
+    expect(local_gateway_allowed('bacs', ''))->toBeTrue()
+        ->and(local_gateway_allowed('cheque', 'no'))->toBeTrue()
+        ->and(local_gateway_allowed('stripe', 'yes'))->toBeTrue()
+        ->and(local_gateway_allowed('ppcp-gateway', '1'))->toBeTrue()
+        ->and(local_gateway_allowed('paypal', 'no'))->toBeFalse()
+        ->and(local_gateway_allowed('woocommerce_payments', ''))->toBeFalse();
+
+    $extra = run_local_mail_guard(['WP_ENV' => 'development', 'MAIL_HOST' => 'mailpit'])['extra'];
+
+    expect($extra['gateways'])->toBe(['bacs', 'cod', 'stripe', 'ppcp']);
+});
+
+it('does not touch gateways on staging or production', function () {
+    expect(run_local_mail_guard(['WP_ENV' => 'production', 'MAIL_HOST' => 'mailpit'])['hooks'])->toBe([]);
 });

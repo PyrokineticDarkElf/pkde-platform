@@ -54,6 +54,12 @@ function local_stripe_settings(mixed $settings): mixed
     return $settings;
 }
 
+/** Offline gateways take no money; every other gateway must report test mode (testmode or sandbox "yes"/"1"/"true"/"on") to stay on a local site. */
+function local_gateway_allowed(string $id, mixed $testMode): bool
+{
+    return in_array($id, ['bacs', 'cheque', 'cod'], true) || in_array(strtolower(trim((string) $testMode)), ['yes', '1', 'true', 'on'], true);
+}
+
 /** True for a URL on a marketing or newsletter service that a local site must not talk to. */
 function local_blocked_host(string $url): bool
 {
@@ -79,6 +85,29 @@ foreach (['new_order', 'cancelled_order', 'failed_order'] as $email) {
 add_filter('wpcf7_mail_components', fn($components) => is_array($components) ? array_merge($components, ['recipient' => $testEmail]) : $components, 999);
 
 add_filter('option_woocommerce_stripe_settings', __NAMESPACE__ . '\\local_stripe_settings');
+
+// Payments: any gateway that is not offline and not in test mode is removed from checkout (so a live PayPal, WooPayments or Square key in an
+// imported database cannot take a payment from a local site). Stripe is forced into test mode above, so it stays available.
+add_filter('woocommerce_available_payment_gateways', function ($gateways) {
+    if (! is_array($gateways)) {
+        return $gateways;
+    }
+
+    foreach ($gateways as $id => $gateway) {
+        $mode = '';
+
+        if (is_object($gateway)) {
+            $mode = method_exists($gateway, 'get_option') ? ($gateway->get_option('testmode') ?: $gateway->get_option('sandbox')) : '';
+            $mode = $mode ?: ($gateway->testmode ?? $gateway->sandbox ?? '');
+        }
+
+        if (! local_gateway_allowed((string) $id, $mode)) {
+            unset($gateways[$id]);
+        }
+    }
+
+    return $gateways;
+}, 999);
 
 add_filter('pre_http_request', function ($preempt, $args, $url) {
     return local_blocked_host((string) $url) ? new \WP_Error('pkde_local_blocked', 'Blocked on a local site: ' . (string) parse_url((string) $url, PHP_URL_HOST)) : $preempt;
