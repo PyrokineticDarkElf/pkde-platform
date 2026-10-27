@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026.10.28.1
+
+- `local-mail-guard` also answers the rest of the live state a database import brings, at runtime and without writing to the database (MGR-61 scope, from js and bb; TPL-128). With `WP_ENV=development`: the site admin email (`admin_email`, `new_admin_email`) and the WooCommerce new/cancelled/failed order recipients and every Contact Form 7 recipient become `LOCAL_TEST_EMAIL` (default `local-test@example.com`); WooCommerce Stripe settings are forced into test mode with every key, secret, token and webhook secret blanked except the `test_` ones (so a live key can never charge a card); requests to Mailchimp, Sender, Brevo/Sendinblue, Klaviyo, MailerLite and HubSpot are refused with a WP_Error. These apply even without `MAIL_HOST`. Staging and production are untouched. The stored values stay in the database, so the scrub in `docs/modules.md` is still done; this makes a forgotten step harmless. Pest cases cover the Stripe blanking, the host list, and the whole module run in a fresh process with live-like values. **Adopt:** nothing; a bump is enough.
+
 ## 2026.10.28
 
 - New module `local-mail-guard` (MGR-61, from el; TPL-128): a local site filled from a live database kept Post SMTP's stored `postman_options` (live SMTP login, sender) and the live Contact Form 7 recipients, so a local test form tried to send real mail through the live mailbox. When `WP_ENV` is `development`, every read of `postman_options` now answers a fresh Mailpit option (`MAIL_HOST`/`MAIL_PORT`, no login, no encryption, sender = the admin email) and PHPMailer is pointed at Mailpit last (priority 999). Nothing from the stored row is used, so no live credential is either. Without `MAIL_HOST` every message is dropped and one line goes to the error log. Staging and production are untouched. Pest cases run the module in a fresh PHP process with live-like options and check that none of their values come back.

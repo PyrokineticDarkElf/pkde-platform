@@ -127,6 +127,8 @@ Google Ads Enhanced Conversions matches a conversion by the visitor's phone, whi
 
 With `WP_ENV=development` every read of Post SMTP's `postman_options` answers a fresh Mailpit option, whatever the database holds, so a live import cannot send real mail; PHPMailer is also pointed at Mailpit at priority 999. No `MAIL_HOST` = every message is dropped (logged). Staging and production are untouched (`staging-mail-guard.php` covers staging).
 
+The same guard keeps the other live state of an imported database out of a local site, at runtime, with no database writes: the admin email, the WooCommerce order-email recipients and every Contact Form 7 recipient read as `LOCAL_TEST_EMAIL` (default `local-test@example.com`; wp-admin shows it too); WooCommerce Stripe is forced into test mode with every non-`test_` key, secret, token and webhook secret blanked; and requests to Mailchimp, Sender, Brevo, Klaviyo, MailerLite and HubSpot are refused. The database still holds the live values, so do the scrub below as well; this only makes a forgotten step harmless.
+
 ## After importing a live database
 
 A live import into a local or staging database brings live state. `local-mail-guard` and `staging-mail-guard` stop the mail; the rest is a scrub, done once per import, before anyone clicks Send:
