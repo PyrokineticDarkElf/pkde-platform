@@ -9,6 +9,24 @@ namespace App\MuPlugins;
 
 use enshrined\svgSanitize\Sanitizer;
 
+/**
+ * True when an upload is (or will be stored as) an SVG: the client-sent type says so, or the file name ends in .svg (any case, also after
+ * other dots: logo.min.svg). Pure, so a test can load this file without WordPress.
+ *
+ * @param  array{name?: string, type?: string}  $file
+ */
+function svg_upload_needs_sanitising(array $file): bool
+{
+    $type = strtolower(trim((string) ($file['type'] ?? '')));
+    $extension = strtolower(pathinfo((string) ($file['name'] ?? ''), PATHINFO_EXTENSION));
+
+    return $type === 'image/svg+xml' || $extension === 'svg';
+}
+
+if (! function_exists('add_filter')) {
+    return;
+}
+
 // WordPress blocks SVG uploads by default (XSS precaution — an unsanitised
 // SVG can carry <script>/event-handler attributes). A real client logo and
 // icon set is routinely SVG, so this is near-universal friction rather than
@@ -41,8 +59,14 @@ add_filter('wp_check_filetype_and_ext', function (array $data, string $file, str
 // The actual XSS mitigation: sanitize the file's own contents before
 // WordPress moves it into place. The two filters above only get SVG
 // recognised/allowed in the first place — they don't make it safe.
-add_filter('wp_handle_upload_prefilter', function (array $file): array {
-    if (($file['type'] ?? '') !== 'image/svg+xml' || empty($file['tmp_name'])) {
+//
+// Runs for every upload path: the media library and the classic uploader (wp_handle_upload_prefilter) AND the REST API and
+// any raw-body or programmatic sideload (wp_handle_sideload_prefilter, which WordPress core uses for POST /wp/v2/media with a
+// raw body). The decision is by the file name's extension as well as the client-sent type: the type is the visitor's word, so a
+// file named x.svg sent as text/plain, or with no type at all, is still sanitised (WordPress stores it as image/svg+xml, from
+// its extension).
+$sanitizeSvg = function (array $file): array {
+    if (empty($file['tmp_name']) || ! svg_upload_needs_sanitising($file)) {
         return $file;
     }
 
@@ -65,4 +89,7 @@ add_filter('wp_handle_upload_prefilter', function (array $file): array {
     file_put_contents($file['tmp_name'], $clean);
 
     return $file;
-});
+};
+
+add_filter('wp_handle_upload_prefilter', $sanitizeSvg);
+add_filter('wp_handle_sideload_prefilter', $sanitizeSvg);

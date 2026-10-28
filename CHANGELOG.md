@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026.10.28.3
+
+- **Security fix (rp audit, RP-84):** `safe-svg` sanitised an upload only when the client-sent `$file['type']` was `image/svg+xml`, and hooked only `wp_handle_upload_prefilter`. An SVG named `x.svg` but sent as another Content-Type (or none), or uploaded through the REST API's raw-body upload or any programmatic sideload (`wp_handle_sideload_prefilter`), was stored unsanitised (WordPress stores it as `image/svg+xml` from its extension, so script and event-handler attributes survived). Now an upload is sanitised when its type says SVG OR its file name ends in `.svg` (any case), and the same sanitiser is hooked on the sideload prefilter too. Pest cases cover the decision and the two hooks. **Adopt:** bump only (all sites on the package; sites on copies get it at Phase C). Not in this release: `X-Content-Type-Options: nosniff` and a CSP for `/app/uploads` SVG (a server header: a pkde-deploy hardening-block change, tracked separately).
+
 ## 2026.10.28.2
 
 - `local-mail-guard` also removes live-capable payment gateways from checkout when `WP_ENV=development` (manager, TPL-128). WooCommerce Stripe was already forced into test mode at runtime (settings filter, no database writes: `testmode=yes`, every non-`test_` key, secret, token and webhook secret blanked); now `woocommerce_available_payment_gateways` (priority 999) drops every gateway that is neither offline (`bacs`, `cheque`, `cod`) nor reporting test mode (`testmode` or `sandbox` = yes/1/true/on), so a live PayPal, WooPayments or Square setup in an imported database cannot take a payment from a local site. Pest cases cover the rule and the filter run with stub gateways. Staging and production are untouched. **Adopt:** nothing; a bump is enough. A gateway that keeps its test flag under another name is dropped (safe side): say so and it is added.
