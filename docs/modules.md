@@ -139,3 +139,11 @@ A live import into a local or staging database brings live state. `local-mail-gu
 4. **Newsletter plugins:** switch off MailPoet, Sender and any other plugin that sends on its own schedule.
 5. Never print a key to check it: test with booleans (`is set`, `is empty`).
 
+## `disable-xmlrpc.php` — XML-RPC off by default
+
+`xmlrpc.php` allows a password-guessing multiplier (`system.multicall`), pingback abuse and an upload route without the sanitising of the REST and admin uploaders. No PKDE site uses it, so `xmlrpc_enabled` is false, `xmlrpc_methods` is emptied, the `X-Pingback` header is removed and pings close. A site that needs it sets `ALLOW_XMLRPC=true` in `.env` (read through `setting()`) or `add_filter('pkde_allow_xmlrpc', '__return_true')`; SVG upload stays refused over XML-RPC. The deploy tools deny the file in `.htaccess` as well, which an opted-in site must remove from its shared `.htaccess`.
+
+## `restrict-unfiltered-html.php` — `unfiltered_html` for administrators only
+
+Everyone who cannot `manage_options` loses `unfiltered_html`, so an Editor's content always passes kses. `add_filter('pkde_editors_unfiltered_html', '__return_true')` keeps it for Editors on one site.
+

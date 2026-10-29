@@ -33,6 +33,11 @@ if (! function_exists('add_filter')) {
 // a project-specific need — allow the mime type, but sanitize every upload
 // through enshrined/svg-sanitize before it ever lands on disk.
 add_filter('upload_mimes', function (array $mimes): array {
+    // Not over XML-RPC: wp.uploadFile writes the bytes with wp_upload_bits(), which has no prefilter to sanitise them.
+    if (defined('XMLRPC_REQUEST') && XMLRPC_REQUEST) {
+        return $mimes;
+    }
+
     $mimes['svg'] = 'image/svg+xml';
 
     return $mimes;
@@ -78,7 +83,11 @@ $sanitizeSvg = function (array $file): array {
         return $file;
     }
 
-    $clean = (new Sanitizer())->sanitize($dirty);
+    // Remote references (external <use href>, xlink:href, CSS url()) are removed too: an SVG that pulls in another origin can track whoever views it
+    // and can carry the other file's script on browsers that load it.
+    $sanitizer = new Sanitizer();
+    $sanitizer->removeRemoteReferences(true);
+    $clean = $sanitizer->sanitize($dirty);
 
     if ($clean === false) {
         $file['error'] = __('This SVG file could not be sanitised and was rejected.', 'sage');

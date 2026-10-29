@@ -1,5 +1,14 @@
 # Changelog
 
+## 2026.10.29
+
+ADOPT ALL audit-fix batch (MGR-67, TPL-138). **Adopt:** bump only, for sites on the package; `ALLOW_XMLRPC=true` in `.env` for a site that uses XML-RPC (the WordPress mobile app, Jetpack); see the release feed.
+
+- **XML-RPC is off by default** (new module `disable-xmlrpc`; owner decision 2026-10-29, bp/jsd/rp audits): `xmlrpc_enabled` false, every method removed, the `X-Pingback` header dropped, pings closed. `ALLOW_XMLRPC=true` in `.env` (or `add_filter('pkde_allow_xmlrpc', '__return_true')`) opts a site back in. Even then SVG uploads are refused over XML-RPC (that route writes with `wp_upload_bits()`, which has no sanitiser hook). The deploy tools also deny `xmlrpc.php` in `.htaccess` (pkde-deploy 2026.10.29.1).
+- **`unfiltered_html` for administrators only** (new module `restrict-unfiltered-html`; tcs audit): Editors can no longer save script or iframes in content (stored XSS that runs for visitors and for the administrators who open it); Administrators keep it for GTM snippets and embeds. `add_filter('pkde_editors_unfiltered_html', '__return_true')` restores it for a site that needs Editors to have it.
+- **safe-svg removes remote references** (`removeRemoteReferences(true)`; tcs audit): external `<use href>`, `xlink:href` and CSS `url()` targets are stripped from uploaded SVGs.
+- Pest cases for the three (the pure rules, the hooks and the SVG option).
+
 ## 2026.10.28.3
 
 - **Security fix (rp audit, RP-84):** `safe-svg` sanitised an upload only when the client-sent `$file['type']` was `image/svg+xml`, and hooked only `wp_handle_upload_prefilter`. An SVG named `x.svg` but sent as another Content-Type (or none), or uploaded through the REST API's raw-body upload or any programmatic sideload (`wp_handle_sideload_prefilter`), was stored unsanitised (WordPress stores it as `image/svg+xml` from its extension, so script and event-handler attributes survived). Now an upload is sanitised when its type says SVG OR its file name ends in `.svg` (any case), and the same sanitiser is hooked on the sideload prefilter too. Pest cases cover the decision and the two hooks. **Adopt:** bump only (all sites on the package; sites on copies get it at Phase C). Not in this release: `X-Content-Type-Options: nosniff` and a CSP for `/app/uploads` SVG (a server header: a pkde-deploy hardening-block change, tracked separately).
