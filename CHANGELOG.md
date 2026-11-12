@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026.11.12
+
+The site's `.env` in 1Password (WP-87, owner go 2026-11-12). **Adopt:** bump only. Nothing changes until the site's `.env` sets `WP_ADMIN_EMAIL`.
+
+- **New module `admin-email-notice`.** A warning on Settings > General, shown to administrators, when `WP_ADMIN_EMAIL` (the constant, else the `.env` value) is a valid address that differs from the `admin_email` option. It overrides nothing, writes nothing and prints no address; the deploy's drift check ("admin_email equals WP_ADMIN_EMAIL (.env)") is the hard check.
+
 ## 2026.10.29
 
 ADOPT ALL audit-fix batch (MGR-67, TPL-138). **Adopt:** bump only, for sites on the package; `ALLOW_XMLRPC=true` in `.env` for a site that uses XML-RPC (the WordPress mobile app, Jetpack); see the release feed.

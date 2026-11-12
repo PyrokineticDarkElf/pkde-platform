@@ -24,6 +24,7 @@ namespace Pkde\Platform;
 function modules(): array
 {
     return [
+        'admin-email-notice',
         'cf7-assets-on-demand',
         'cf7-test-copy',
         'coming-soon',
