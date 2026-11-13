@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026.11.13.1
+
+REST users closed for anonymous visitors (owner yes, WP-88). **Adopt:** bump only.
+
+- **New module `rest-users-private`.** `/wp/v2/users`, `/wp/v2/users/me` and `/wp/v2/users/<id>` (and `.../application-passwords`) are removed from the REST routes (404 `rest_no_route`) for everyone who is not a logged-in user who can `list_users` or `edit_posts`: in every environment, independent of Wordfence's "Prevent discovery of usernames" (so also on staging, where Wordfence is inactive). The block editor's author picker, wp-admin and the Application Passwords of an editor or administrator keep working; a logged-in subscriber or WooCommerce customer gets 404 too. Checked: oEmbed `author_url` and Rank Math's person `url` already point at the home page for users without an archive (module `author-archives`); the `author_name` and the schema name are the public byline (display name), and post responses still carry the numeric author ID and a `_links` entry that leads nowhere.
+
 ## 2026.11.13
 
 Author archives only for real authors (WP-88, owner request). **Adopt:** bump only. A site whose blog authors are not in the `author` role sets `AUTHOR_ARCHIVE_ROLES` in `.env` (comma separated role slugs) or `add_filter('pkde_platform/author_archive_roles', ...)` first, or their archives and bylines change (see the feed entry).

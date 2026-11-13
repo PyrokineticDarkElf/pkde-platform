@@ -41,6 +41,7 @@ function modules(): array
         'phone-e164',
         'post-smtp-env',
         'private-usernames',
+        'rest-users-private',
         'restrict-unfiltered-html',
         'safe-svg',
         'staging-mail-guard',
