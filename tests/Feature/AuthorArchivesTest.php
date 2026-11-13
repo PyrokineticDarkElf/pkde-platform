@@ -21,6 +21,7 @@ it('reads the roles from the .env value and falls back to author when it is empt
 it('allows a user who holds at least one allowed role, and nobody else', function () {
     expect(author_has_allowed_role(['author'], ['author']))->toBeTrue()
         ->and(author_has_allowed_role(['subscriber', 'Author'], ['author']))->toBeTrue()
+        ->and(author_has_allowed_role(['administrator', 'author'], ['author']))->toBeTrue() // an administrator who also holds author (multi-role) keeps the archive
         ->and(author_has_allowed_role(['administrator'], ['author']))->toBeFalse()
         ->and(author_has_allowed_role([], ['author']))->toBeFalse()
         ->and(author_has_allowed_role(['author'], []))->toBeFalse();
