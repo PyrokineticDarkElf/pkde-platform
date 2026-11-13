@@ -1,5 +1,13 @@
 # Changelog
 
+## 2026.11.13
+
+Author archives only for real authors (WP-88, owner request). **Adopt:** bump only. A site whose blog authors are not in the `author` role sets `AUTHOR_ARCHIVE_ROLES` in `.env` (comma separated role slugs) or `add_filter('pkde_platform/author_archive_roles', ...)` first, or their archives and bylines change (see the feed entry).
+
+- **New module `author-archives`.** Only users with an allowed role (default `author`) keep an author archive. For every other user: the archive (and `?author=N`, and the author feed) answers with the theme's normal 404, noindex, decided on `wp` before Rank Math fixes the page type (so the title is "Page not found", not the author), then again on `template_redirect` priority 1 (before `redirect_canonical`); never cached (`DONOTCACHEPAGE`, `nocache_headers()`, and W3TC does not store a 404). The `author_link` filter returns the home page for those users outside wp-admin, so bylines, Rank Math's person schema and the REST `link` field stop pointing at the dead URL. Rank Math's author sitemap, HTML author sitemap and sitemap index counts exclude every other role (through `sitemap.exclude_roles`, read from the option), and WordPress' own users sitemap is limited to the allowed roles.
+- **One source for the allowed roles:** `AUTHOR_ARCHIVE_ROLES` (.env), else `['author']`, then the filter `pkde_platform/author_archive_roles`. No role is hard-coded besides the default.
+- **Not changed:** the REST users list and oEmbed. On a site with Wordfence's default "Prevent discovery of usernames" (`loginSec_disableAuthorScan`) the REST list is already closed to anonymous visitors; see the feed entry.
+
 ## 2026.11.12
 
 The site's `.env` in 1Password (WP-87, owner go 2026-11-12). **Adopt:** bump only. Nothing changes until the site's `.env` sets `WP_ADMIN_EMAIL`.

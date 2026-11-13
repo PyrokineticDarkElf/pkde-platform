@@ -25,6 +25,7 @@ function modules(): array
 {
     return [
         'admin-email-notice',
+        'author-archives',
         'cf7-assets-on-demand',
         'cf7-test-copy',
         'coming-soon',
