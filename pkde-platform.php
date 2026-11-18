@@ -45,6 +45,7 @@ function modules(): array
         'restrict-unfiltered-html',
         'safe-svg',
         'staging-mail-guard',
+        'staging-safety-net',
         'wordfence-local-dns',
     ];
 }

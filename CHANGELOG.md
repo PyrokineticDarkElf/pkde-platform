@@ -1,5 +1,15 @@
 # Changelog
 
+## 2026.11.18
+
+Staging safety net (WP-91, TPL-176; from tcs's `staging-safeguards.php`). **Adopt:** bump only; a site with its own copy of `staging-safeguards.php` (tcs) deletes it after the bump and a staging check.
+
+- **New module `staging-safety-net`**, active whenever `WP_ENV` is not `production` (an unset `WP_ENV` is production): `X-Robots-Tag: noindex, nofollow` on every response WordPress answers (priority 9999, so it wins over the kit's `noindex, follow` on a filtered shop URL), `noindex, nofollow` in `wp_robots` and in Rank Math's robots meta, `robots.txt` replaced by `User-agent: *` / `Disallow: /` with no sitemap line (after Rank Math's robots.txt editor and `content-signal`), every WooCommerce payment gateway removed and checkout validation refuses an order.
+- **Label, staging only:** a small pill "Staging - not the shop", fixed bottom-right, `pointer-events: none`, so it never covers the kit's sticky Apply bar (tcs commit 481e373). A local site shows none.
+- Static files (images, PDFs) never reach PHP: pkde-deploy 2026.11.18 adds the matching `.htaccess` block.
+- **Fix:** the comment in `content-signal` said staging stays a plain disallow because the site "is not public"; staging is public by WordPress's flag. Nothing changed in that module's behaviour; the new module is what keeps staging out.
+- Proved on the template stack over HTTP with `WP_ENV=staging` and `development` (headers, meta, `robots.txt`, zero payment gateways, label) and `production` (none of it). Not run on a real staging site.
+
 ## 2026.11.13.1
 
 REST users closed for anonymous visitors (owner yes, WP-88). **Adopt:** bump only.

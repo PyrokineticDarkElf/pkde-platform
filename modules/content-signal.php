@@ -5,8 +5,10 @@
  * Description: Adds a `Content-Signal:` line (Cloudflare's Content Signals Policy) to the virtual robots.txt,
  *              saying whether the site may be indexed for search, used as live input for AI answers, or used
  *              for AI training. A declared preference, not enforcement; some bots ignore it. Value comes from
- *              CONTENT_SIGNAL in .env (blank = the default below). Skipped when the site is not public, so
- *              staging and local robots.txt stay a plain disallow.
+ *              CONTENT_SIGNAL in .env (blank = the default below). Skipped when WordPress says the site is not public
+ *              (Settings > Reading, "Discourage search engines"). That is NOT what keeps staging out of search: a staging
+ *              copy of a live site is public by that flag. The staging-safety-net module (priority 9999, after this
+ *              one) replaces the whole robots.txt with a disallow whenever WP_ENV is not production.
  *
  * Runs at priority 99 so it still applies when Rank Math's robots.txt editor has replaced the whole file
  * (Rank Math hooks the same filter at 10). A physical web/robots.txt would bypass WordPress and this entirely.
