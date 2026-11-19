@@ -44,6 +44,7 @@ function modules(): array
         'rest-users-private',
         'restrict-unfiltered-html',
         'safe-svg',
+        'schema-absolute-urls',
         'staging-mail-guard',
         'staging-safety-net',
         'wordfence-local-dns',

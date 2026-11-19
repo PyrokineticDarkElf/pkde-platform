@@ -1,5 +1,12 @@
 # Changelog
 
+## 2026.11.19
+
+Schema URLs and opening hours (WP-91 phase 2, TPL-182). **Adopt:** bump only. A site that sets its real opening hours and a business type loses nothing; a site that printed the seeded week stops printing it.
+
+- **New module `schema-absolute-urls`:** every `url`, `contentUrl`, `thumbnailUrl`, `logo` and `image` in Rank Math's JSON-LD that is site-relative (`/app/uploads/logo.png`) or protocol-relative becomes absolute on the site's own origin (priority 100, after `local-business-schema`). Checked on the template stack: with the module off the logo is `"url":"/app/uploads/logo.png"`, on it is `http://localhost:8092/app/uploads/logo.png`.
+- **`local-business-schema`: opening hours only when set.** Hours are printed only on a node with a business type besides Organization, and never when the rows are exactly Rank Math's seed (Monday to Sunday 09:00-17:00). A business that really is open that week returns true from the filter `pkde_platform/opening_hours_are_set`. Checked over HTTP: bare Organization with real hours has none; Store with the seed has none; Store with real hours has them, grouped by identical times.
+
 ## 2026.11.18
 
 Staging safety net (WP-91, TPL-176; from tcs's `staging-safeguards.php`). **Adopt:** bump only; a site with its own copy of `staging-safeguards.php` (tcs) deletes it after the bump and a staging check.
