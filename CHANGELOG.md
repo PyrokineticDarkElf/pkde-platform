@@ -1,5 +1,16 @@
 # Changelog
 
+## 2026.11.20.1
+
+New module `faq`: FAQs as non-public content (WP-102, TPL-232). **Adopt:** bb now (staging pilot, with kit 2026.11.20.2); tcs, js, el now; rp, bp, mds, jsd, cs after their December production release. Not Train-ready.
+
+- **The post type `pkde_faq`:** no URL, archive, search result or sitemap entry (`public` false, `rewrite` false); its own "FAQs" menu; revisions; the question is the title and the answer is the content, written with paragraphs, lists, h3 and h4 headings and bold, italic and links only.
+- **The taxonomy `pkde_faq_group`:** many groups per FAQ, a column and a filter in the FAQs list, a description per group.
+- **Order per group:** drag the rows of the FAQs list filtered by one group; the order is stored on the group (`_pkde_faq_order`), so one FAQ can sit in a different place in each of its groups; `menu_order` and the title are the fallback.
+- **Who:** every capability of the post type and the groups is `manage_pkde_faqs`, given to Administrators and to the new role **SEO** (`pkde_seo`: the Editor's capabilities, `manage_pkde_faqs`, and Rank Math's SEO capabilities when it is active). Editors do not get it and cannot open the FAQs screen. Installed on the first request and again when the module version changes. Assigning people to the SEO role is the owner's job.
+- **Page cache:** saving, trashing, re-grouping or re-ordering a FAQ, and changing a group, purges the pages that show the group (a page records its groups when it is saved); if a page with an FAQ block has not been saved since, the whole page cache is flushed instead.
+- Pest 101.
+
 ## 2026.11.20
 
 New module `editor-settings` (WP-100, TPL-209, TPL-217, TPL-219, TPL-220, TPL-222, TPL-230): the block editor by role. **Adopt:** bb now (staging pilot, with kit 2026.11.20.1); every other site the February train, through a manager brief.
