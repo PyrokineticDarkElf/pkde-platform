@@ -14,7 +14,7 @@ use function App\MuPlugins\editor_theme_json;
 $registered = [
     'core/paragraph', 'core/heading', 'core/group', 'core/image', 'core/buttons', 'core/button', 'core/list', 'core/spacer', 'core/block',
     'core/shortcode', 'core/html', 'core/cover', 'core/query', 'core/post-template', 'core/verse', 'core/calendar', 'core/embed',
-    'sage/hero', 'sage/section', 'bb/latest-reviews', 'wpcf7/contact-form-selector', 'rank-math/faq-block',
+    'sage/hero', 'sage/section', 'bb/latest-reviews', 'wpcf7/contact-form-selector', 'contact-form-7/contact-form-selector', 'relevanssi/live-search', 'relevanssi/search-form', 'rank-math/faq-block',
     'woocommerce/cart', 'woocommerce/checkout', 'woocommerce/cart-items-block', 'woocommerce/product-collection',
 ];
 
@@ -124,4 +124,22 @@ it('locks Sections for non-Administrators with the block lock, not templateLock 
         ->and($js)->not->toMatch('/templateLock\s*[:=]/')
         ->and($php)->toContain("add_action('enqueue_block_editor_assets'", 'editor-lock.js')
         ->and($php)->toMatch('/if \(\$isAdministrator\(\) \|\| ! is_file\(\$file\)\) \{\s+return;/'); // an Administrator never gets the script
+});
+
+it('hides the Contact Form 7 and Relevanssi blocks from an Editor and keeps them for an Administrator', function () use ($registered) {
+    $editor = editor_allowed_blocks($registered, false);
+    $admin = editor_allowed_blocks($registered, true);
+
+    expect($editor)->not->toContain('contact-form-7/contact-form-selector', 'relevanssi/live-search', 'relevanssi/search-form')
+        ->and($editor)->toContain('wpcf7/contact-form-selector', 'sage/hero') // other plugin and kit blocks stay
+        ->and($admin)->toContain('contact-form-7/contact-form-selector', 'relevanssi/live-search', 'relevanssi/search-form')
+        ->and(editor_allowed_blocks($registered, false, ['core/paragraph'], []))->toContain('contact-form-7/contact-form-selector'); // a site can empty the list
+});
+
+it('blocks duplicating a Section at the action, so the menu, the shortcut and anything else cannot', function () {
+    $js = file_get_contents(dirname(__DIR__, 2) . '/modules/editor-settings/editor-lock.js');
+
+    expect($js)->toContain('wp.data.use(', "actions.duplicateBlocks = ( clientIds, ...rest )", "namespace === 'core/block-editor'", 'isSection( store.getBlock( id ) )')
+        // the shortcut is stopped where it is pressed too, in the page and in the editor canvas
+        ->and($js)->toContain("window.addEventListener( 'keydown', stopDuplicateShortcut, true )", 'doc.addEventListener( \'keydown\', stopDuplicateShortcut, true )', 'event.stopImmediatePropagation()');
 });

@@ -11,6 +11,7 @@
  *               - allowed blocks: a curated core list, plus every block the kit, the site and its plugins register, plus (Administrators only) shortcode,
  *                 custom HTML, the query family, cover and the WooCommerce cart/checkout blocks. A site extends the core list with the filter
  *                 `pkde_platform/editor_core_blocks`;
+ *               - the Contact Form 7 and Relevanssi blocks are Administrators' only (a site changes the list with `pkde_platform/editor_admin_only_namespaces`);
  *               - Rank Math's blocks (FAQ, HowTo, Table of Contents, schema) are hidden from the inserter for everyone; content that already has one keeps rendering;
  *               - WordPress's and WooCommerce's bundled block patterns are removed; the kit's (`pkde`) and a site's own remain;
  *               - an Editor cannot move, duplicate or remove a Section (the kit's sage/section and any block with a Brand section theme): the block `lock`, not templateLock all,
@@ -29,6 +30,9 @@ const EDITOR_CORE_BLOCKS = [
     'core/block', 'core/pattern', 'core/missing', // synced patterns and the placeholders the editor itself needs
 ];
 
+/** Plugin blocks only Administrators see (forms come from the kit's contact block and the form keys; the search blocks are the site's to place). */
+const EDITOR_ADMIN_ONLY_NAMESPACES = ['contact-form-7/', 'relevanssi/'];
+
 /** Core blocks only Administrators may insert. */
 const EDITOR_ADMIN_CORE_BLOCKS = [
     'core/shortcode', 'core/html', 'core/cover',
@@ -43,10 +47,11 @@ const EDITOR_ADMIN_CORE_BLOCKS = [
  * @param  list<string>  $coreBlocks  the core list (after the site's filter)
  * @return list<string>
  */
-function editor_allowed_blocks(array $registered, bool $isAdministrator, array $coreBlocks = EDITOR_CORE_BLOCKS): array
+function editor_allowed_blocks(array $registered, bool $isAdministrator, array $coreBlocks = EDITOR_CORE_BLOCKS, array $adminOnlyPrefixes = EDITOR_ADMIN_ONLY_NAMESPACES): array
 {
     // the kit's, the site's and every plugin's blocks (sage/*, bb/*, wpcf7/*, rank-math/*): anything that is neither core nor WooCommerce
-    $own = array_filter($registered, fn($name) => ! str_starts_with($name, 'core/') && ! str_starts_with($name, 'woocommerce/') && ! str_starts_with($name, 'rank-math/'));
+    $hidden = $isAdministrator ? [] : $adminOnlyPrefixes;
+    $own = array_filter($registered, fn($name) => ! str_starts_with($name, 'core/') && ! str_starts_with($name, 'woocommerce/') && ! str_starts_with($name, 'rank-math/') && ! array_filter($hidden, fn($prefix) => str_starts_with($name, $prefix)));
     $allowed = array_merge(array_intersect($coreBlocks, $registered), $own);
 
     if ($isAdministrator) {
@@ -191,8 +196,9 @@ add_filter('allowed_block_types_all', function ($allowed, $context) use ($isAdmi
 
     $registered = array_keys(\WP_Block_Type_Registry::get_instance()->get_all_registered());
     $core = (array) apply_filters('pkde_platform/editor_core_blocks', EDITOR_CORE_BLOCKS);
+    $adminOnly = (array) apply_filters('pkde_platform/editor_admin_only_namespaces', EDITOR_ADMIN_ONLY_NAMESPACES);
 
-    return editor_allowed_blocks($registered, $isAdministrator(), array_values($core));
+    return editor_allowed_blocks($registered, $isAdministrator(), array_values($core), array_values($adminOnly));
 }, 20, 2);
 
 add_filter('register_block_type_args', fn($args, $name) => editor_hide_rank_math((array) $args, (string) $name), 10, 2);

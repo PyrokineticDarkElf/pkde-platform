@@ -33,6 +33,27 @@
 		walk( store.getBlocks() );
 	};
 
+	// Duplicate itself is blocked, not only its menu item: the options menu, the keyboard shortcut (Ctrl/Cmd+Shift+D) and anything else that duplicates go through the
+	// block editor's duplicateBlocks action, which is wrapped here to skip Sections.
+	wp.data.use( ( registry ) => ( {
+		dispatch: ( namespace ) => {
+			const actions = Object.assign( {}, registry.dispatch( namespace ) );
+
+			if ( namespace === 'core/block-editor' && actions.duplicateBlocks ) {
+				const original = actions.duplicateBlocks;
+
+				actions.duplicateBlocks = ( clientIds, ...rest ) => {
+					const store = registry.select( 'core/block-editor' );
+					const allowed = ( clientIds || [] ).filter( ( id ) => ! isSection( store.getBlock( id ) ) );
+
+					return allowed.length ? original( allowed, ...rest ) : undefined;
+				};
+			}
+
+			return actions;
+		},
+	} ) );
+
 	let busy = false;
 	subscribe( () => {
 		if ( busy ) {
@@ -45,6 +66,33 @@
 			busy = false;
 		}
 	} );
+
+	// The keyboard shortcut (Ctrl/Cmd+Shift+D) does not pass through the wrapped action in every WordPress version, so it is also stopped where it is pressed: in the page and in
+	// the editor canvas (an iframe), while a Section is selected.
+	const stopDuplicateShortcut = ( event ) => {
+		if ( ! ( event.shiftKey && ( event.ctrlKey || event.metaKey ) && ( event.key || '' ).toLowerCase() === 'd' ) ) {
+			return;
+		}
+
+		const store = select( 'core/block-editor' );
+		const ids = store ? ( store.getSelectedBlockClientIds ? store.getSelectedBlockClientIds() : [] ) : [];
+
+		if ( ids.some( ( id ) => isSection( store.getBlock( id ) ) ) ) {
+			event.preventDefault();
+			event.stopPropagation();
+			event.stopImmediatePropagation();
+		}
+	};
+	window.addEventListener( 'keydown', stopDuplicateShortcut, true );
+	const guardCanvas = () => {
+		const doc = document.querySelector( 'iframe[name="editor-canvas"]' )?.contentDocument;
+
+		if ( doc && ! doc.pkdeDuplicateGuard ) {
+			doc.pkdeDuplicateGuard = true;
+			doc.addEventListener( 'keydown', stopDuplicateShortcut, true );
+		}
+	};
+	window.setInterval( guardCanvas, 500 );
 
 	// the options menu of a selected Section: hide what would copy, duplicate or restructure it
 	const hidden = [ __( 'Duplicate' ), __( 'Copy' ), __( 'Cut' ), __( 'Group' ), __( 'Ungroup' ) ].map( ( text ) => text.trim().toLowerCase() );
