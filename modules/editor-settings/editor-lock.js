@@ -92,7 +92,17 @@
 			doc.addEventListener( 'keydown', stopDuplicateShortcut, true );
 		}
 	};
-	window.setInterval( guardCanvas, 500 );
+	// the canvas iframe appears after this script runs, and its document is replaced when it loads: guard it when it is added and again when it loads (no polling)
+	const watchCanvas = () => {
+		const frame = document.querySelector( 'iframe[name="editor-canvas"]' );
+
+		if ( frame && ! frame.pkdeWatched ) {
+			frame.pkdeWatched = true;
+			frame.addEventListener( 'load', guardCanvas );
+		}
+
+		guardCanvas();
+	};
 
 	// the options menu of a selected Section: what would copy, duplicate or restructure it is taken out, and, whatever the markup of the menu turns out to be in this
 	// WordPress version or what a script does to it, a click or Enter on such an item is stopped before the editor sees it (the action wrapper above is not on every path:
@@ -110,7 +120,7 @@
 		return hidden.some( ( text ) => label.startsWith( text ) ) && ! label.startsWith( 'copy styles' ) && ! label.startsWith( 'copy all' );
 	};
 	// Hidden with a class that carries !important (not an inline style a stylesheet or a re-render could undo), on every menu item that matches, wherever the menu is
-	// rendered (no assumption about the popover's markup, which differs between WordPress versions), and again at every change of the page and every 300 ms.
+	// rendered (no assumption about the popover's markup, which differs between WordPress versions), and again at every change of the page.
 	const style = document.createElement( 'style' );
 	style.textContent = '.pkde-section-menu-hidden{display:none !important;}';
 	document.head.appendChild( style );
@@ -143,7 +153,13 @@
 		}
 	}, true );
 
-	new MutationObserver( hideItems ).observe( document.body, { childList: true, subtree: true } );
+	// No timer: the menu is hidden when it is added to the page (a MutationObserver), when the selection changes (the block editor store), and right after a click or key.
+	const refresh = () => {
+		watchCanvas();
+		hideItems();
+	};
+	new MutationObserver( refresh ).observe( document.body, { childList: true, subtree: true } );
+	subscribe( refresh );
 	[ 'mousedown', 'mouseup', 'click', 'keyup', 'focusin' ].forEach( ( type ) => window.addEventListener( type, () => window.setTimeout( hideItems, 0 ), true ) );
-	window.setInterval( hideItems, 300 );
+	refresh();
 }( window.wp ) );

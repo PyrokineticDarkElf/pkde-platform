@@ -145,5 +145,7 @@ it('blocks duplicating a Section at the action, so the menu, the shortcut and an
         // the options menu: items hidden, and a click or Enter on one stopped before the editor sees it (the action wrapper is not on every path)
         ->and($js)->toContain("window.addEventListener( 'click', stopMenuClick, true )", "closest( '[role=\"menuitem\"]' )", 'isHiddenItem( item ) && selectionHasSection()')
         // hidden by a class with !important on every matching item, with no assumption about the popover's markup
-        ->and($js)->toContain('.pkde-section-menu-hidden{display:none !important;}', "document.querySelectorAll( '[role=\"menuitem\"]' )")->not->toContain('.closest( \'.components-popover');
+        ->and($js)->toContain('.pkde-section-menu-hidden{display:none !important;}', "document.querySelectorAll( '[role=\"menuitem\"]' )")->not->toContain('.closest( \'.components-popover')
+        // no timer: the menu is hidden by a MutationObserver and the block editor store, and the canvas is guarded when its iframe is added or loads
+        ->and($js)->toContain('new MutationObserver( refresh )', 'subscribe( refresh )', "frame.addEventListener( 'load', guardCanvas )")->not->toContain('setInterval');
 });
