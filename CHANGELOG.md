@@ -1,5 +1,12 @@
 # Changelog
 
+## 2026.11.20.2
+
+`editor-settings` hides the kit's `keepSwatches` that are not `editorVisible` from everyone but Administrators (TPL-249, with kit 2026.11.20.5). **Adopt:** with the kit, on tcs now (staging pilot) and every site that uses `keepSwatches`; nothing changes on a site that has none.
+
+- The theme lists the hidden swatches in its generated `editor-palettes.php` (`editorHidden`); for a user without `manage_options` the module takes them out of the editor's palette lists (`block_editor_settings_all`: `colors` and the theme/default/custom palettes). `theme.json` and the frontend CSS keep every swatch, so a block that already uses one renders the same for everyone and an Editor's page does not lose its colour.
+- Pest 102.
+
 ## 2026.11.20.1
 
 New module `faq`: FAQs as non-public content (WP-102, TPL-232). **Adopt:** bb now (staging pilot, with kit 2026.11.20.2); tcs, js, el now; rp, bp, mds, jsd, cs after their December production release. Not Train-ready.
