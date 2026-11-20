@@ -69,6 +69,14 @@ it('restricts the Button block to the button swatches and text blocks to the tex
     expect(editor_block_palettes(['settings' => []], ['button' => ['white']]))->toBe(['settings' => []]);
 });
 
+it('reads the palette keyed by origin, as the filter receives it, and writes the block palettes the same way', function () {
+    $palette = array_map(fn($slug) => ['slug' => $slug, 'name' => $slug, 'color' => '#000'], ['white', 'sage-600', 'sage-200']);
+    $data = editor_block_palettes(['settings' => ['color' => ['palette' => ['theme' => $palette]]]], ['button' => ['white', 'sage-600'], 'text' => ['white']]);
+
+    expect(array_column($data['settings']['blocks']['core/button']['color']['palette']['theme'], 'slug'))->toBe(['white', 'sage-600'])
+        ->and(array_column($data['settings']['blocks']['core/paragraph']['color']['palette']['theme'], 'slug'))->toBe(['white']);
+});
+
 it('reports what each role gets, for the drift check', function () use ($registered) {
     expect(editor_settings_state(false, $registered))->toBe(['canLockBlocks' => false, 'customColors' => false, 'allowsShortcode' => false, 'allowsParagraph' => true])
         ->and(editor_settings_state(true, $registered))->toBe(['canLockBlocks' => true, 'customColors' => true, 'allowsShortcode' => true, 'allowsParagraph' => true]);

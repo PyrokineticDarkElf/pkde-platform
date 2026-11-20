@@ -84,7 +84,10 @@ function editor_settings(array $settings, bool $isAdministrator): array
  */
 function editor_block_palettes(array $data, array $palettes): array
 {
-    $swatches = $data['settings']['color']['palette'] ?? [];
+    $palette = $data['settings']['color']['palette'] ?? [];
+    // WordPress keys presets by origin inside the data a filter receives (palette => ['theme' => [...]]); a bare list is accepted too.
+    $byOrigin = is_array($palette) && isset($palette['theme']) && is_array($palette['theme']);
+    $swatches = $byOrigin ? $palette['theme'] : $palette;
 
     if (! is_array($swatches) || $swatches === []) {
         return $data;
@@ -104,7 +107,7 @@ function editor_block_palettes(array $data, array $palettes): array
     foreach ($targets as $block => $slugs) {
         $list = $only($slugs);
         if ($list !== []) {
-            $data['settings']['blocks'][$block]['color']['palette'] = $list;
+            $data['settings']['blocks'][$block]['color']['palette'] = $byOrigin ? ['theme' => $list] : $list;
         }
     }
 
