@@ -197,16 +197,17 @@ add_filter('allowed_block_types_all', function ($allowed, $context) use ($isAdmi
 
 add_filter('register_block_type_args', fn($args, $name) => editor_hide_rank_math((array) $args, (string) $name), 10, 2);
 
-// Bundled patterns: WordPress's (also off with remove_theme_support) and WooCommerce's. Late, after everything registers its patterns.
+// Bundled patterns: WordPress's (also off with remove_theme_support) and WooCommerce's. WooCommerce registers its patterns late and again when the editor asks for them
+// (the REST request), so they are taken out at every point they can appear: after init, on a REST request and in the editor settings.
 add_action('after_setup_theme', fn() => remove_theme_support('core-block-patterns'), 20);
-add_action('init', function () {
+$removeBundledPatterns = function () {
     if (! class_exists('WP_Block_Patterns_Registry')) {
         return;
     }
 
     $registry = \WP_Block_Patterns_Registry::get_instance();
 
-    foreach (editor_patterns_to_remove(array_keys($registry->get_all_registered())) as $name) {
+    foreach (editor_patterns_to_remove(array_column($registry->get_all_registered(), 'name')) as $name) {
         unregister_block_pattern($name);
     }
 
@@ -218,7 +219,20 @@ add_action('init', function () {
             unregister_block_pattern_category($name);
         }
     }
-}, 999);
+};
+foreach (['init', 'wp_loaded', 'rest_api_init', 'admin_init', 'current_screen'] as $hook) {
+    add_action($hook, $removeBundledPatterns, 9999);
+}
+add_filter('rest_pre_dispatch', function ($result) use ($removeBundledPatterns) {
+    $removeBundledPatterns();
+
+    return $result;
+}, 1);
+add_filter('block_editor_settings_all', function ($settings) use ($removeBundledPatterns) {
+    $removeBundledPatterns();
+
+    return $settings;
+}, 1);
 
 // Editors cannot move, duplicate or remove a Section (editor-lock.js); Administrators keep every control.
 add_action('enqueue_block_editor_assets', function () use ($isAdministrator) {
