@@ -147,3 +147,19 @@ A live import into a local or staging database brings live state. `local-mail-gu
 
 Everyone who cannot `manage_options` loses `unfiltered_html`, so an Editor's content always passes kses. `add_filter('pkde_editors_unfiltered_html', '__return_true')` keeps it for Editors on one site.
 
+
+## `editor-settings.php` — what the block editor offers each role (WP-100, prototype)
+
+By the site's own roles, judged with `current_user_can('manage_options')` (no custom capability):
+
+| | Administrator | Editor (anyone else) |
+|---|---|---|
+| Custom colours and gradients | yes | no (the brand swatches only) |
+| Lock and unlock blocks (`canLockBlocks`) | yes | no |
+| Remote block patterns | off for everyone (`should_load_remote_block_patterns`) | off |
+| Blocks | the curated core list, every block the kit, the site and its plugins register, and shortcode, custom HTML, the query family, cover and the WooCommerce cart/checkout blocks | the curated core list and the registered non-core, non-WooCommerce blocks |
+
+- **The curated core list:** paragraph, heading, group, columns, column, image, buttons, button, list, spacer, separator, details, quote, table, social links, plus the synced-pattern blocks the editor needs. A site adds to it with the filter `pkde_platform/editor_core_blocks`. Existing content with any other block keeps rendering and stays editable; only the inserter is trimmed. Only the post editor is touched (not the site editor or the widget screens).
+- **Per-block palettes:** a Button offers only the swatches that make a button pair, text blocks only the text-safe swatches. The lists are generated with the palette (the theme's `resources/generated/editor-palettes.php`, written by the kit's generator); without that file the module leaves palettes alone.
+- **Why the editor settings too:** WordPress may share the theme.json data between roles through a persistent object cache, so the per-user answer is also written into `block_editor_settings_all`, which is computed for the user on every editor load.
+- **Switch off for one site:** `PKDE_PLATFORM_DISABLE=editor-settings`.

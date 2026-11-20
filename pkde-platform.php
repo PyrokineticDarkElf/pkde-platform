@@ -32,6 +32,7 @@ function modules(): array
         'content-signal',
         'disable-comments',
         'disable-xmlrpc',
+        'editor-settings',
         'google-tag-manager',
         'hide-wp-version',
         'local-business-schema',
