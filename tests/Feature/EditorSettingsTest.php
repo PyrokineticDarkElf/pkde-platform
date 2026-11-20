@@ -149,3 +149,21 @@ it('blocks duplicating a Section at the action, so the menu, the shortcut and an
         // no timer: the menu is hidden by a MutationObserver and the block editor store, and the canvas is guarded when its iframe is added or loads
         ->and($js)->toContain('new MutationObserver( refresh )', 'subscribe( refresh )', "frame.addEventListener( 'load', guardCanvas )")->not->toContain('setInterval');
 });
+
+/** TPL-249: keepSwatches without editorVisible are offered to Administrators only; the data a page renders from is untouched. */
+it('hides the keepSwatches that are not editorVisible from the Editor palette lists, never from an Administrator', function () {
+    $palette = [['slug' => 'sage-600', 'color' => '#637972'], ['slug' => 'peach', 'color' => '#f5efe9'], ['slug' => 'sage-tint', 'color' => '#eff1ef']];
+    $base = ['colors' => $palette, '__experimentalFeatures' => ['color' => ['palette' => ['theme' => $palette, 'default' => []]]]];
+
+    $editor = editor_settings($base, false, ['peach']);
+    expect(array_column($editor['colors'], 'slug'))->toBe(['sage-600', 'sage-tint'])
+        ->and(array_column($editor['__experimentalFeatures']['color']['palette']['theme'], 'slug'))->toBe(['sage-600', 'sage-tint']);
+
+    $admin = editor_settings($base, true, ['peach']);
+    expect(array_column($admin['colors'], 'slug'))->toBe(['sage-600', 'peach', 'sage-tint'])
+        ->and(array_column($admin['__experimentalFeatures']['color']['palette']['theme'], 'slug'))->toBe(['sage-600', 'peach', 'sage-tint']);
+
+    // nothing hidden, or no palette in the settings: unchanged
+    expect(editor_settings($base, false)['colors'])->toBe($palette)
+        ->and(editor_settings(['canLockBlocks' => true], false, ['peach']))->not->toHaveKey('colors');
+});
