@@ -141,5 +141,7 @@ it('blocks duplicating a Section at the action, so the menu, the shortcut and an
 
     expect($js)->toContain('wp.data.use(', "actions.duplicateBlocks = ( clientIds, ...rest )", "namespace === 'core/block-editor'", 'isSection( store.getBlock( id ) )')
         // the shortcut is stopped where it is pressed too, in the page and in the editor canvas
-        ->and($js)->toContain("window.addEventListener( 'keydown', stopDuplicateShortcut, true )", 'doc.addEventListener( \'keydown\', stopDuplicateShortcut, true )', 'event.stopImmediatePropagation()');
+        ->and($js)->toContain("window.addEventListener( 'keydown', stopDuplicateShortcut, true )", 'doc.addEventListener( \'keydown\', stopDuplicateShortcut, true )', 'event.stopImmediatePropagation()')
+        // the options menu: items hidden, and a click or Enter on one stopped before the editor sees it (the action wrapper is not on every path)
+        ->and($js)->toContain("window.addEventListener( 'click', stopMenuClick, true )", "closest( '[role=\"menuitem\"]' )", 'isHiddenItem( item ) && selectionHasSection()');
 });

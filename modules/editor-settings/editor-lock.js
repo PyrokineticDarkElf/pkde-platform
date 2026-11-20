@@ -94,24 +94,48 @@
 	};
 	window.setInterval( guardCanvas, 500 );
 
-	// the options menu of a selected Section: hide what would copy, duplicate or restructure it
+	// the options menu of a selected Section: what would copy, duplicate or restructure it is taken out, and, whatever the markup of the menu turns out to be in this
+	// WordPress version or what a script does to it, a click or Enter on such an item is stopped before the editor sees it (the action wrapper above is not on every path:
+	// the options menu duplicated through a different one on bb.test)
 	const hidden = [ __( 'Duplicate' ), __( 'Copy' ), __( 'Cut' ), __( 'Group' ), __( 'Ungroup' ) ].map( ( text ) => text.trim().toLowerCase() );
-	const hideItems = () => {
+	const selectionHasSection = () => {
 		const store = select( 'core/block-editor' );
-		const id = store && store.getSelectedBlockClientId();
+		const ids = store ? ( store.getSelectedBlockClientIds ? store.getSelectedBlockClientIds() : [] ) : [];
 
-		if ( ! id || ! isSection( store.getBlock( id ) ) ) {
+		return ids.some( ( id ) => isSection( store.getBlock( id ) ) );
+	};
+	const isHiddenItem = ( item ) => {
+		const label = ( item.textContent || '' ).trim().toLowerCase();
+
+		return hidden.some( ( text ) => label.startsWith( text ) ) && ! label.startsWith( 'copy styles' ) && ! label.startsWith( 'copy all' );
+	};
+	const hideItems = () => {
+		if ( ! selectionHasSection() ) {
 			return;
 		}
 
-		document.querySelectorAll( '.block-editor-block-settings-menu__popover [role="menuitem"], .components-dropdown-menu__menu [role="menuitem"]' ).forEach( ( item ) => {
-			const label = ( item.textContent || '' ).trim().toLowerCase();
-
-			if ( hidden.some( ( text ) => label.startsWith( text ) ) ) {
+		document.querySelectorAll( '[role="menuitem"]' ).forEach( ( item ) => {
+			if ( isHiddenItem( item ) && item.closest( '.components-popover, .components-dropdown-menu__menu, .block-editor-block-settings-menu__popover, [class*="popover"]' ) ) {
 				item.style.display = 'none';
 			}
 		} );
 	};
+	const stopMenuClick = ( event ) => {
+		const item = event.target && event.target.closest ? event.target.closest( '[role="menuitem"]' ) : null;
+
+		if ( item && isHiddenItem( item ) && selectionHasSection() ) {
+			event.preventDefault();
+			event.stopPropagation();
+			event.stopImmediatePropagation();
+		}
+	};
+	window.addEventListener( 'click', stopMenuClick, true );
+	window.addEventListener( 'keydown', ( event ) => {
+		if ( ( event.key === 'Enter' || event.key === ' ' ) && event.target && event.target.closest && event.target.closest( '[role="menuitem"]' ) ) {
+			stopMenuClick( event );
+		}
+	}, true );
 
 	new MutationObserver( hideItems ).observe( document.body, { childList: true, subtree: true } );
+	window.setInterval( hideItems, 400 );
 }( window.wp ) );
