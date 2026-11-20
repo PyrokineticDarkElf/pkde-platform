@@ -36,6 +36,7 @@ function modules(): array
         'faq',
         'google-tag-manager',
         'hide-wp-version',
+        'legal',
         'local-business-schema',
         'local-mail-guard',
         'login-slug',
