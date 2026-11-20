@@ -1,5 +1,14 @@
 # Changelog
 
+## 2026.11.20
+
+New module `editor-settings` (WP-100, TPL-209, TPL-217, TPL-219, TPL-220, TPL-222, TPL-230): the block editor by role. **Adopt:** bb now (staging pilot, with kit 2026.11.20.1); every other site the February train, through a manager brief.
+
+- **Administrators keep the full editor; everyone else gets a safe one.** Custom colours and gradients, block locking and the unrestricted block list need `manage_options` (per user, through `block_editor_settings_all`); an Editor sees the palette swatches only and a curated list of core blocks plus the kit's and the site's own.
+- **Editors cannot move, duplicate or remove a Section** (or any block carrying a Brand style): the block `lock` is set on them (never `templateLock: all`, so the writing inside stays editable) and Duplicate, Copy, Cut, Group and Ungroup are taken out of the options menu, the shortcut and the action. The menu is hidden by a MutationObserver and the editor store (no timers).
+- **Fewer ways to wander off the design:** WordPress's and WooCommerce's bundled patterns are removed (only the kit's and the site's own remain), remote patterns stay off, Rank Math's blocks are hidden from the inserter for everyone (existing content still renders), the Contact Form 7 selector and Relevanssi blocks are Administrator-only.
+- Pest 95 (run as an Editor and as an Administrator).
+
 ## 2026.11.19
 
 Schema URLs and opening hours (WP-91 phase 2, TPL-182). **Adopt:** bump only. A site that sets its real opening hours and a business type loses nothing; a site that printed the seeded week stops printing it.
