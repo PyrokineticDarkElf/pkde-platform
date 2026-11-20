@@ -109,14 +109,21 @@
 
 		return hidden.some( ( text ) => label.startsWith( text ) ) && ! label.startsWith( 'copy styles' ) && ! label.startsWith( 'copy all' );
 	};
+	// Hidden with a class that carries !important (not an inline style a stylesheet or a re-render could undo), on every menu item that matches, wherever the menu is
+	// rendered (no assumption about the popover's markup, which differs between WordPress versions), and again at every change of the page and every 300 ms.
+	const style = document.createElement( 'style' );
+	style.textContent = '.pkde-section-menu-hidden{display:none !important;}';
+	document.head.appendChild( style );
 	const hideItems = () => {
-		if ( ! selectionHasSection() ) {
-			return;
-		}
+		const hideNow = selectionHasSection();
 
 		document.querySelectorAll( '[role="menuitem"]' ).forEach( ( item ) => {
-			if ( isHiddenItem( item ) && item.closest( '.components-popover, .components-dropdown-menu__menu, .block-editor-block-settings-menu__popover, [class*="popover"]' ) ) {
-				item.style.display = 'none';
+			if ( hideNow && isHiddenItem( item ) ) {
+				item.classList.add( 'pkde-section-menu-hidden' );
+				item.setAttribute( 'aria-hidden', 'true' );
+			} else if ( item.classList.contains( 'pkde-section-menu-hidden' ) ) {
+				item.classList.remove( 'pkde-section-menu-hidden' );
+				item.removeAttribute( 'aria-hidden' );
 			}
 		} );
 	};
@@ -137,5 +144,6 @@
 	}, true );
 
 	new MutationObserver( hideItems ).observe( document.body, { childList: true, subtree: true } );
-	window.setInterval( hideItems, 400 );
+	[ 'mousedown', 'mouseup', 'click', 'keyup', 'focusin' ].forEach( ( type ) => window.addEventListener( type, () => window.setTimeout( hideItems, 0 ), true ) );
+	window.setInterval( hideItems, 300 );
 }( window.wp ) );

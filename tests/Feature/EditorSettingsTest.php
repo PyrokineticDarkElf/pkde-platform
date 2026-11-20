@@ -143,5 +143,7 @@ it('blocks duplicating a Section at the action, so the menu, the shortcut and an
         // the shortcut is stopped where it is pressed too, in the page and in the editor canvas
         ->and($js)->toContain("window.addEventListener( 'keydown', stopDuplicateShortcut, true )", 'doc.addEventListener( \'keydown\', stopDuplicateShortcut, true )', 'event.stopImmediatePropagation()')
         // the options menu: items hidden, and a click or Enter on one stopped before the editor sees it (the action wrapper is not on every path)
-        ->and($js)->toContain("window.addEventListener( 'click', stopMenuClick, true )", "closest( '[role=\"menuitem\"]' )", 'isHiddenItem( item ) && selectionHasSection()');
+        ->and($js)->toContain("window.addEventListener( 'click', stopMenuClick, true )", "closest( '[role=\"menuitem\"]' )", 'isHiddenItem( item ) && selectionHasSection()')
+        // hidden by a class with !important on every matching item, with no assumption about the popover's markup
+        ->and($js)->toContain('.pkde-section-menu-hidden{display:none !important;}', "document.querySelectorAll( '[role=\"menuitem\"]' )")->not->toContain('.closest( \'.components-popover');
 });
