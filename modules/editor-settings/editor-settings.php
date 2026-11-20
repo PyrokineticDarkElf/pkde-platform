@@ -11,6 +11,10 @@
  *               - allowed blocks: a curated core list, plus every block the kit, the site and its plugins register, plus (Administrators only) shortcode,
  *                 custom HTML, the query family, cover and the WooCommerce cart/checkout blocks. A site extends the core list with the filter
  *                 `pkde_platform/editor_core_blocks`;
+ *               - Rank Math's blocks (FAQ, HowTo, Table of Contents, schema) are hidden from the inserter for everyone; content that already has one keeps rendering;
+ *               - WordPress's and WooCommerce's bundled block patterns are removed; the kit's (`pkde`) and a site's own remain;
+ *               - an Editor cannot move, duplicate or remove a Section (the kit's sage/section and any block with a Brand section theme): the block `lock`, not templateLock all,
+ *                 so the writing inside stays editable (editor-lock.js, loaded for non-Administrators);
  *               - per-block palettes: a Button offers only the swatches that make a button pair, text blocks only the text-safe ones (the lists are
  *                 generated with the palette: the theme's resources/generated/editor-palettes.php).
  *              Switch the module off with PKDE_PLATFORM_DISABLE=editor-settings.
@@ -42,7 +46,7 @@ const EDITOR_ADMIN_CORE_BLOCKS = [
 function editor_allowed_blocks(array $registered, bool $isAdministrator, array $coreBlocks = EDITOR_CORE_BLOCKS): array
 {
     // the kit's, the site's and every plugin's blocks (sage/*, bb/*, wpcf7/*, rank-math/*): anything that is neither core nor WooCommerce
-    $own = array_filter($registered, fn($name) => ! str_starts_with($name, 'core/') && ! str_starts_with($name, 'woocommerce/'));
+    $own = array_filter($registered, fn($name) => ! str_starts_with($name, 'core/') && ! str_starts_with($name, 'woocommerce/') && ! str_starts_with($name, 'rank-math/'));
     $allowed = array_merge(array_intersect($coreBlocks, $registered), $own);
 
     if ($isAdministrator) {
@@ -51,6 +55,37 @@ function editor_allowed_blocks(array $registered, bool $isAdministrator, array $
     }
 
     return array_values(array_unique($allowed));
+}
+
+/** Block type arguments with the block hidden from the inserter when it is one of Rank Math's (existing content keeps rendering: only the inserter changes). */
+function editor_hide_rank_math(array $args, string $name): array
+{
+    if (str_starts_with($name, 'rank-math/')) {
+        $args['supports'] = array_merge((array) ($args['supports'] ?? []), ['inserter' => false]);
+    }
+
+    return $args;
+}
+
+/** The registered pattern names to remove: WordPress's own and WooCommerce's (`core/…`, `woocommerce/…`, `woocommerce-blocks/…`); the kit's and a site's stay. */
+function editor_patterns_to_remove(array $names): array
+{
+    return array_values(array_filter($names, fn($name) => (bool) preg_match('~^(core|woocommerce|woocommerce-blocks|woocommerce-[a-z-]+)/~', (string) $name)));
+}
+
+/**
+ * The pattern categories left with no pattern once the bundled ones are gone (WordPress's "Banners", "Gallery"... and WooCommerce's): they would list as empty
+ * headings in the inserter.
+ *
+ * @param  list<string>  $categories  every registered category name
+ * @param  list<list<string>>  $usedBy  the category names of each remaining pattern
+ * @return list<string>
+ */
+function editor_unused_pattern_categories(array $categories, array $usedBy): array
+{
+    $used = array_unique(array_merge(...($usedBy ?: [[]])));
+
+    return array_values(array_diff($categories, $used));
 }
 
 /** theme.json data with the full colour picker on for Administrators and off for everyone else. */
@@ -159,3 +194,41 @@ add_filter('allowed_block_types_all', function ($allowed, $context) use ($isAdmi
 
     return editor_allowed_blocks($registered, $isAdministrator(), array_values($core));
 }, 20, 2);
+
+add_filter('register_block_type_args', fn($args, $name) => editor_hide_rank_math((array) $args, (string) $name), 10, 2);
+
+// Bundled patterns: WordPress's (also off with remove_theme_support) and WooCommerce's. Late, after everything registers its patterns.
+add_action('after_setup_theme', fn() => remove_theme_support('core-block-patterns'), 20);
+add_action('init', function () {
+    if (! class_exists('WP_Block_Patterns_Registry')) {
+        return;
+    }
+
+    $registry = \WP_Block_Patterns_Registry::get_instance();
+
+    foreach (editor_patterns_to_remove(array_keys($registry->get_all_registered())) as $name) {
+        unregister_block_pattern($name);
+    }
+
+    if (class_exists('WP_Block_Pattern_Categories_Registry')) {
+        $categories = \WP_Block_Pattern_Categories_Registry::get_instance();
+        $usedBy = array_map(fn($pattern) => (array) ($pattern['categories'] ?? []), $registry->get_all_registered());
+
+        foreach (editor_unused_pattern_categories(array_column($categories->get_all_registered(), 'name'), $usedBy) as $name) {
+            unregister_block_pattern_category($name);
+        }
+    }
+}, 999);
+
+// Editors cannot move, duplicate or remove a Section (editor-lock.js); Administrators keep every control.
+add_action('enqueue_block_editor_assets', function () use ($isAdministrator) {
+    $file = __DIR__ . '/editor-lock.js';
+
+    if ($isAdministrator() || ! is_file($file)) {
+        return;
+    }
+
+    wp_register_script('pkde-editor-lock', false, ['wp-data', 'wp-i18n', 'wp-block-editor'], null, true);
+    wp_enqueue_script('pkde-editor-lock');
+    wp_add_inline_script('pkde-editor-lock', (string) file_get_contents($file));
+});
