@@ -1,5 +1,18 @@
 # Changelog
 
+## 2026.11.20.3
+
+New module `legal`: legal documents as their own content (WP-104, TPL-253). **Adopt:** bb (a shop, staging pilot) and cs (after its December release); every other site through a later manager brief. Not Train-ready. Needs kit 2026.11.20.6 for the page and pkde-deploy 2026.11.20.5 for `legal-migrate.php` and the drift rows.
+
+- **The post type `pkde_legal`:** public, indexable, in the sitemaps (core's; Rank Math's switch for the type is turned on once, and an Administrator may turn it off), out of the site search, title, editor and revisions, its own "Legal" admin menu, no archive.
+- **Addresses at the root, `/<slug>/`:** no base. A Page with that slug always wins; a document that would clash (and a Page that would clash with a published document) is saved as a draft with an admin notice. Posts, products, product categories, the shop and every other address are untouched: only a request WordPress would otherwise take for a missing page is looked up as a document.
+- **Fields** (registered meta, in REST, in a "Document details" panel): `_pkde_legal_type` (privacy, cookies, terms, returns, delivery, accessibility, modern-slavery, other), `_pkde_legal_effective`, `_pkde_legal_reviewed` (dates), `_pkde_legal_version`.
+- **Who:** Administrators and Editors (the SEO role has the Editor's capabilities) through `edit_pkde_legals` and its family, installed on the first request and again when the module version changes. Core's rule that only an Administrator may edit the Privacy Policy page is lifted for a privacy document.
+- **Blocks:** headings, paragraphs, lists, tables, quotes, details and separators (existing content with another block keeps rendering).
+- **Core and WooCommerce:** the Privacy Policy and WooCommerce Terms page dropdowns list the documents; both settings may hold a document ID (the privacy link and the checkout terms link resolve).
+- **The `legal` menu location** ("Legal"): filled automatically from the published documents in document-type order, unless a real menu is assigned to it.
+- Proved in real WordPress on the template stack (documents at their addresses with the shop, a product, a category, the cart, a page and the blog beside them; clashes both ways; the roles; the editor as Editor and as Administrator; Settings > Privacy; WooCommerce 11.3 block checkout and its settings screen). Pest 111.
+
 ## 2026.11.20.2
 
 `editor-settings` hides the kit's `keepSwatches` that are not `editorVisible` from everyone but Administrators (TPL-249, with kit 2026.11.20.5). **Adopt:** with the kit, on tcs now (staging pilot) and every site that uses `keepSwatches`; nothing changes on a site that has none.
