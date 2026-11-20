@@ -16,6 +16,8 @@
  *               - WordPress's and WooCommerce's bundled block patterns are removed; the kit's (`pkde`) and a site's own remain;
  *               - an Editor cannot move, duplicate or remove a Section (the kit's sage/section and any block with a Brand section theme): the block `lock`, not templateLock all,
  *                 so the writing inside stays editable (editor-lock.js, loaded for non-Administrators);
+ *               - keepSwatches (config/brand-palette.json): extra exact colours in the palette that only Administrators are offered unless the site sets
+ *                 `editorVisible: true` on them; the theme lists the hidden ones in editor-palettes.php (`editorHidden`);
  *               - per-block palettes: a Button offers only the swatches that make a button pair, text blocks only the text-safe ones (the lists are
  *                 generated with the palette: the theme's resources/generated/editor-palettes.php).
  *              Switch the module off with PKDE_PLATFORM_DISABLE=editor-settings.
@@ -105,14 +107,32 @@ function editor_theme_json(array $data, bool $isAdministrator): array
 /**
  * The editor settings for a role. The editor reads its features from these, which are computed per user on every load, so this holds even when
  * a persistent object cache shares the theme.json data between roles.
+ *
+ * @param  list<string>  $hiddenSwatches  keepSwatches slugs (the theme's editor-palettes.php `editorHidden`) that only Administrators are offered. They are
+ *                                        taken out of the editor's palette lists and nowhere else: the theme.json data and the frontend CSS keep them, so a
+ *                                        block that already uses one still renders and an Editor's page does not lose its colour.
  */
-function editor_settings(array $settings, bool $isAdministrator): array
+function editor_settings(array $settings, bool $isAdministrator, array $hiddenSwatches = []): array
 {
     $settings['canLockBlocks'] = $isAdministrator;
     $settings['disableCustomColors'] = ! $isAdministrator;
     $settings['disableCustomGradients'] = ! $isAdministrator;
     $settings['__experimentalFeatures']['color']['custom'] = $isAdministrator;
     $settings['__experimentalFeatures']['color']['customGradient'] = $isAdministrator;
+
+    if (! $isAdministrator && $hiddenSwatches !== []) {
+        $keep = fn(array $list) => array_values(array_filter($list, fn($swatch) => ! in_array($swatch['slug'] ?? '', $hiddenSwatches, true)));
+
+        if (isset($settings['colors']) && is_array($settings['colors'])) {
+            $settings['colors'] = $keep($settings['colors']);
+        }
+
+        foreach (['theme', 'default', 'custom'] as $origin) {
+            if (isset($settings['__experimentalFeatures']['color']['palette'][$origin]) && is_array($settings['__experimentalFeatures']['color']['palette'][$origin])) {
+                $settings['__experimentalFeatures']['color']['palette'][$origin] = $keep($settings['__experimentalFeatures']['color']['palette'][$origin]);
+            }
+        }
+    }
 
     return $settings;
 }
@@ -184,7 +204,12 @@ add_filter('wp_theme_json_data_theme', function ($data) use ($isAdministrator) {
     return $data->update_with($new);
 });
 
-add_filter('block_editor_settings_all', fn($settings) => editor_settings((array) $settings, $isAdministrator()), 20);
+add_filter('block_editor_settings_all', function ($settings) use ($isAdministrator) {
+    $file = function_exists('get_theme_file_path') ? get_theme_file_path('resources/generated/editor-palettes.php') : '';
+    $palettes = $file !== '' && is_file($file) ? (array) require $file : [];
+
+    return editor_settings((array) $settings, $isAdministrator(), (array) ($palettes['editorHidden'] ?? []));
+}, 20);
 
 add_filter('should_load_remote_block_patterns', '__return_false');
 
