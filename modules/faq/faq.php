@@ -37,12 +37,12 @@ const FAQ_RANK_MATH_CAPS = [
     'rank_math_site_analysis', 'rank_math_onpage_general', 'rank_math_onpage_advanced', 'rank_math_onpage_snippet', 'rank_math_onpage_social', 'rank_math_content_ai',
 ];
 
-/** The post type's primitive capabilities: every one is the one capability. */
+/** The post type's primitive capabilities: every one is the one capability (the meta capabilities edit_post, read_post and delete_post stay WordPress's own and map to these). */
 function faq_post_caps(): array
 {
     $caps = [];
 
-    foreach (['edit_post', 'read_post', 'delete_post', 'edit_posts', 'edit_others_posts', 'delete_posts', 'publish_posts', 'read_private_posts', 'delete_private_posts', 'delete_published_posts',
+    foreach (['edit_posts', 'edit_others_posts', 'delete_posts', 'publish_posts', 'read_private_posts', 'delete_private_posts', 'delete_published_posts',
         'delete_others_posts', 'edit_private_posts', 'edit_published_posts', 'create_posts'] as $name) {
         $caps[$name] = FAQ_CAP;
     }
@@ -250,7 +250,7 @@ add_action('enqueue_block_editor_assets', function () {
         return;
     }
 
-    wp_register_script('pkde-faq-editor', false, ['wp-rich-text', 'wp-hooks', 'wp-compose', 'wp-element', 'wp-block-editor', 'wp-dom-ready'], null, true);
+    wp_register_script('pkde-faq-editor', false, ['wp-rich-text', 'wp-data', 'wp-format-library', 'wp-hooks', 'wp-compose', 'wp-element', 'wp-block-editor', 'wp-dom-ready'], null, true);
     wp_enqueue_script('pkde-faq-editor');
     wp_add_inline_script('pkde-faq-editor', (string) file_get_contents($file));
 });
@@ -455,16 +455,19 @@ add_action('save_post', function ($postId, $post) {
     }
 
     $resolve = fn(int $ref) => ($p = get_post($ref)) ? parse_blocks($p->post_content) : [];
-    $groups = has_block(FAQ_BLOCK, $post) || str_contains($post->post_content, '<!-- wp:block ') ? faq_groups_in_blocks(parse_blocks($post->post_content), $resolve) : [];
+    $hasBlock = has_block(FAQ_BLOCK, $post) || str_contains($post->post_content, '<!-- wp:block ');
+    $groups = $hasBlock ? faq_groups_in_blocks(parse_blocks($post->post_content), $resolve) : [];
+    // 0 = "looked, and this page shows no group" (an FAQ block typed by hand, or a synced pattern without one): the page is recorded, so it never counts as unknown
+    $record = $hasBlock && ! $groups ? [0] : $groups;
     $before = array_map('intval', get_post_meta($postId, FAQ_PAGE_META));
 
-    if ($groups === $before) {
+    if ($record === $before) {
         return;
     }
 
     delete_post_meta($postId, FAQ_PAGE_META);
 
-    foreach ($groups as $group) {
+    foreach ($record as $group) {
         add_post_meta($postId, FAQ_PAGE_META, $group);
     }
 }, 20, 2);
@@ -490,13 +493,20 @@ function faq_pages_for_groups(array $groupIds): array
             'meta_key' => FAQ_PAGE_META, 'meta_value' => (int) $group])));
     }
 
+    // a page counts as unknown when it holds an FAQ block (or a synced pattern that does) and has never been saved since this module recorded groups
+    $synced = array_map('intval', (array) $wpdb->get_col($wpdb->prepare("SELECT ID FROM {$wpdb->posts} WHERE post_type = 'wp_block' AND post_content LIKE %s", '%<!-- wp:sage/faq%')));
+    $likes = ['p.post_content LIKE %s'];
+    $args = ['%<!-- wp:sage/faq%'];
+
+    foreach ($synced as $ref) {
+        $likes[] = 'p.post_content LIKE %s';
+        $args[] = '%"ref":' . $ref . '%';
+    }
+
     $unrecorded = (int) $wpdb->get_var($wpdb->prepare(
-        "SELECT COUNT(*) FROM {$wpdb->posts} p WHERE p.post_status = 'publish' AND p.post_type <> %s AND (p.post_content LIKE %s OR p.post_content LIKE %s)
+        "SELECT COUNT(*) FROM {$wpdb->posts} p WHERE p.post_status = 'publish' AND p.post_type <> %s AND (" . implode(' OR ', $likes) . ")
          AND NOT EXISTS (SELECT 1 FROM {$wpdb->postmeta} m WHERE m.post_id = p.ID AND m.meta_key = %s)",
-        FAQ_POST_TYPE,
-        '%<!-- wp:sage/faq%',
-        '%<!-- wp:block %',
-        FAQ_PAGE_META,
+        [FAQ_POST_TYPE, ...$args, FAQ_PAGE_META],
     ));
 
     return ['ids' => array_values(array_unique($ids)), 'unknown' => $unrecorded > 0];
@@ -506,7 +516,10 @@ function faq_purge(array $groupIds): void
 {
     $pages = faq_pages_for_groups($groupIds);
 
-    if ($pages['unknown']) {
+    // a synced pattern that changes is shown on pages whose own record is the old one: flush everything for it too
+    $syncedChanged = $pages['ids'] && array_filter($pages['ids'], fn($id) => get_post_type($id) === 'wp_block');
+
+    if ($pages['unknown'] || $syncedChanged) {
         // some page with an FAQ block has never recorded its groups: flush everything rather than serve a stale answer
         if (function_exists('w3tc_flush_all')) {
             w3tc_flush_all();

@@ -1,10 +1,10 @@
 /* The FAQ answer editor (modules/faq): paragraphs, lists, h3/h4 headings, and bold, italic and links; nothing else. */
 ( function ( wp ) {
-	var removable = [ 'core/code', 'core/image', 'core/keyboard', 'core/language', 'core/strikethrough', 'core/subscript', 'core/superscript', 'core/text-color', 'core/underline', 'core/footnote' ];
+	var removable = [ 'core/code', 'core/image', 'core/keyboard', 'core/language', 'core/strikethrough', 'core/subscript', 'core/superscript', 'core/text-color', 'core/underline', 'core/footnote', 'core/math' ];
 
 	wp.domReady( function () {
 		removable.forEach( function ( name ) {
-			if ( wp.richText.getFormatType( name ) ) {
+			if ( wp.data.select( 'core/rich-text' ).getFormatType( name ) ) {
 				wp.richText.unregisterFormatType( name );
 			}
 		} );
