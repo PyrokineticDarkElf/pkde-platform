@@ -48,6 +48,7 @@ function modules(): array
         'restrict-unfiltered-html',
         'safe-svg',
         'schema-absolute-urls',
+        'site-details',
         'staging-mail-guard',
         'staging-safety-net',
         'wordfence-local-dns',
