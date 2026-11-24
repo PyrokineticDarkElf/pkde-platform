@@ -12,6 +12,7 @@ use function App\MuPlugins\legal_menu_html;
 use function App\MuPlugins\legal_post_caps;
 use function App\MuPlugins\legal_post_type_args;
 use function App\MuPlugins\legal_resolve_request;
+use function App\MuPlugins\legal_should_trash;
 use function App\MuPlugins\legal_sanitize_date;
 use function App\MuPlugins\legal_sanitize_type;
 use function App\MuPlugins\legal_slug_clash;
@@ -125,4 +126,14 @@ it('keeps dates as Y-m-d only and types from the list', function () {
 it('takes core\'s administrator-only gate off the privacy document, so an Editor edits it like the others', function () {
     expect(legal_caps_without_privacy_gate(['edit_pkde_legals', 'edit_published_pkde_legals', 'manage_options']))->toBe(['edit_pkde_legals', 'edit_published_pkde_legals'])
         ->and(legal_caps_without_privacy_gate(['edit_pkde_legals']))->toBe(['edit_pkde_legals']);
+});
+
+it('moves a document to the trash on a delete without force, and only then', function () {
+    expect(legal_should_trash('pkde_legal', 'draft', false, 30))->toBeTrue()
+        ->and(legal_should_trash('pkde_legal', 'publish', false, 30))->toBeTrue()
+        ->and(legal_should_trash('pkde_legal', 'draft', true, 30))->toBeFalse()   // an explicit force deletes for good
+        ->and(legal_should_trash('pkde_legal', 'trash', false, 30))->toBeFalse()  // already in the trash: this delete empties it
+        ->and(legal_should_trash('pkde_legal', 'draft', false, 0))->toBeFalse()   // the site has no trash
+        ->and(legal_should_trash('page', 'draft', false, 30))->toBeFalse()        // core handles pages and posts itself
+        ->and(file_get_contents(dirname(__DIR__, 2) . '/modules/legal/legal.php'))->toContain("add_filter('pre_delete_post'");
 });

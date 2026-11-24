@@ -9,6 +9,8 @@
  *               - the fields `_pkde_legal_effective`, `_pkde_legal_reviewed` (dates), `_pkde_legal_version` and `_pkde_legal_type` (privacy, cookies, terms, returns, delivery,
  *                 accessibility, modern-slavery, other), registered meta shown in REST, edited in a panel of the document sidebar;
  *               - who: Administrators and Editors (the SEO role has the Editor's capabilities, so it too), through the `edit_pkde_legals` family of capabilities;
+ *               - nothing is deleted for good by accident: a delete without force (a script, the REST API, a plugin) moves a document to the trash, which core does only for posts and pages;
+ *                 WP-CLI's `wp post delete` refuses other types without --force, so `wp legal trash <id>` and `wp legal restore <id>` do it;
  *               - the block set: headings, paragraphs, lists, tables, quotes, details and separators; no Sections, colours or marketing blocks;
  *               - core and WooCommerce: the Privacy Policy page and the WooCommerce Terms page may be a document (their dropdowns list the documents, the links resolve);
  *               - a registered menu location `legal` ("Legal"), filled automatically from the published documents in document-type order, unless a site assigns a real menu to it.
@@ -215,6 +217,15 @@ function legal_caps_without_privacy_gate(array $caps): array
     return array_values(array_diff($caps, ['manage_options', 'manage_privacy_options']));
 }
 
+/**
+ * Whether a delete request should move a document to the trash instead: core's wp_delete_post() trashes only posts and pages (a custom post type is deleted for good unless the caller
+ * forces it), so `wp post delete`, a script or a plugin that does not force would lose a document with no way back.
+ */
+function legal_should_trash(string $postType, string $status, bool $force, int $trashDays): bool
+{
+    return $postType === LEGAL_POST_TYPE && ! $force && $status !== 'trash' && $trashDays > 0;
+}
+
 if (! function_exists('add_action')) {
     return; // outside WordPress (the unit tests load this file for the functions above)
 }
@@ -299,6 +310,38 @@ add_filter('map_meta_cap', function ($caps, $cap, $userId, $args) {
 
     return $caps;
 }, 20, 4);
+
+// a delete without force moves a document to the trash (it can be restored), like a post; only an explicit force or an already trashed one deletes for good
+add_filter('pre_delete_post', function ($check, $post, $force) {
+    if ($check === null && $post instanceof \WP_Post && legal_should_trash($post->post_type, $post->post_status, (bool) $force, defined('EMPTY_TRASH_DAYS') ? (int) EMPTY_TRASH_DAYS : 0)) {
+        return wp_trash_post($post->ID) ?: false;
+    }
+
+    return $check;
+}, 10, 3);
+
+// WP-CLI's `wp post delete` refuses any post type but post and page without --force (it is hard-coded there, before WordPress is asked), so documents get their own commands:
+//   wp legal trash <id>...     moves documents to the trash          wp legal restore <id>...     brings them back (as drafts)
+if (defined('WP_CLI') && WP_CLI && class_exists('WP_CLI')) {
+    $legalCli = function (string $verb) {
+        return function ($args) use ($verb) {
+            foreach ($args as $id) {
+                $post = get_post((int) $id);
+
+                if (! $post || $post->post_type !== LEGAL_POST_TYPE) {
+                    \WP_CLI::warning("#$id is not a legal document.");
+
+                    continue;
+                }
+
+                $done = $verb === 'trash' ? wp_trash_post($post->ID) : wp_untrash_post($post->ID);
+                $done ? \WP_CLI::success(($verb === 'trash' ? 'Trashed' : 'Restored') . " document #{$post->ID} (" . get_post_field('post_name', $post->ID) . ').') : \WP_CLI::warning("Could not $verb #{$post->ID}.");
+            }
+        };
+    };
+    \WP_CLI::add_command('legal trash', $legalCli('trash'));
+    \WP_CLI::add_command('legal restore', $legalCli('restore'));
+}
 
 add_filter('enter_title_here', fn($text, $post) => ($post->post_type ?? '') === LEGAL_POST_TYPE ? 'Document title, such as Privacy policy' : $text, 10, 2);
 
