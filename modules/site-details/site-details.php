@@ -12,6 +12,7 @@
  *               - who: the capability `manage_pkde_site_details`, given to Administrators and the SEO role;
  *               - phones are checked and stored as E.164 (the phone-e164 module's rules); what a person typed is kept for display;
  *               - it FEEDS Rank Math: the declaration's type makes the site an Organization (or a LocalBusiness) and the name, address, phone, email, opening hours and `sameAs` come from here (a value Site details does not have is left to Rank Math);
+ *               - the old `client_phone`, `client_email`, `client_address` and `client_<network>` options answer with Site details for one release (a read shim: a view that still reads them is right);
  *               - for the theme: `site_details()` returns the merged array, `site_detail('business.trading_name')` one value.
  *              Switch the module off with PKDE_PLATFORM_DISABLE=site-details.
  */
@@ -345,6 +346,33 @@ function site_details_rank_math_titles(array $titles, array $details, string $ty
     return $titles;
 }
 
+/** The old `client_*` option names the theme and the sites' views read, and the Site details value each stands for. */
+const SITE_DETAILS_CLIENT_OPTIONS = ['phone', 'email', 'address', 'facebook', 'instagram', 'linkedin', 'x', 'youtube'];
+
+/**
+ * What the old option `client_<key>` should answer now that Site details holds the value (the read shim, kept for one release so a view that still reads the option is right),
+ * or null when Site details has nothing for it (the option's own value is then used).
+ */
+function site_details_client_value(string $key, array $details): ?string
+{
+    $value = match ($key) {
+        'phone' => (string) ($details['phones'][0]['display'] ?? '') !== '' ? (string) $details['phones'][0]['display'] : (string) ($details['phones'][0]['number'] ?? ''),
+        'email' => (string) ($details['emails'][0]['address'] ?? ''),
+        'address' => implode(', ', array_filter([$details['locations'][0]['street'] ?? '', $details['locations'][0]['town'] ?? '', $details['locations'][0]['county'] ?? '', $details['locations'][0]['postcode'] ?? ''], fn($v) => $v !== '')),
+        default => (function () use ($key, $details): string {
+            foreach ((array) ($details['socials'] ?? []) as $social) {
+                if (($social['network'] ?? '') === $key) {
+                    return (string) $social['url'];
+                }
+            }
+
+            return '';
+        })(),
+    };
+
+    return $value === '' ? null : $value;
+}
+
 /**
  * What a site of this type must have, as sentences (for the drift check); empty when complete.
  *
@@ -438,6 +466,25 @@ add_action('init', function () {
         update_option('pkde_site_details_installed', SITE_DETAILS_VERSION);
     }
 }, 7);
+
+// ---------------------------------------------------------------------------------------------------------------------------------------------------------------------
+// the read shim: get_option('client_phone') and the others answer with Site details (one release), so a view that still reads them is right
+
+foreach (SITE_DETAILS_CLIENT_OPTIONS as $clientKey) {
+    add_filter("pre_option_client_$clientKey", function ($pre) use ($clientKey) {
+        static $busy = false;
+
+        if ($busy) {
+            return $pre;
+        }
+
+        $busy = true;
+        $value = site_details_client_value($clientKey, site_details());
+        $busy = false;
+
+        return $value ?? $pre;
+    });
+}
 
 // ---------------------------------------------------------------------------------------------------------------------------------------------------------------------
 // Rank Math: Site details feeds it

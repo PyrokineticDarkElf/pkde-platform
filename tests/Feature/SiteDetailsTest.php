@@ -5,6 +5,7 @@
  */
 require_once dirname(__DIR__, 2) . '/modules/site-details/site-details.php';
 
+use function App\MuPlugins\site_details_client_value;
 use function App\MuPlugins\site_details_defaults;
 use function App\MuPlugins\site_details_has_hours;
 use function App\MuPlugins\site_details_hours_rows;
@@ -134,4 +135,20 @@ it('never stores a locked path, and makes the site an organisation or a local bu
         ->and(site_details_rank_math_titles(['local_business_type' => 'Store'], site_details_defaults(), 'local-business')['local_business_type'])->toBe('Store') // a more specific type is kept
         ->and(site_details_rank_math_titles(['knowledgegraph_type' => 'person'], site_details_defaults(), 'shop')['knowledgegraph_type'])->toBe('company')
         ->and(site_details_rank_math_titles(['knowledgegraph_type' => 'person'], site_details_defaults(), '')['knowledgegraph_type'])->toBe('person');
+});
+
+it('answers the old client_* options from Site details, and says nothing when there is nothing', function () {
+    $d = site_details_defaults();
+    $d['phones'] = [['label' => '', 'number' => '+441132000000', 'display' => '0113 200 0000']];
+    $d['emails'] = [['label' => '', 'address' => 'hello@example.test']];
+    $d['locations'] = [['street' => '1 High St', 'town' => 'Leeds', 'county' => '', 'postcode' => 'LS1 1AA', 'country' => 'GB', 'label' => '', 'map_url' => '']];
+    $d['socials'] = [['network' => 'instagram', 'url' => 'https://instagram.com/a', 'label' => ''], ['network' => 'x', 'url' => 'https://x.com/a', 'label' => '']];
+
+    expect(site_details_client_value('phone', $d))->toBe('0113 200 0000')
+        ->and(site_details_client_value('email', $d))->toBe('hello@example.test')
+        ->and(site_details_client_value('address', $d))->toBe('1 High St, Leeds, LS1 1AA')
+        ->and(site_details_client_value('instagram', $d))->toBe('https://instagram.com/a')
+        ->and(site_details_client_value('x', $d))->toBe('https://x.com/a')
+        ->and(site_details_client_value('facebook', $d))->toBeNull()
+        ->and(site_details_client_value('phone', site_details_defaults()))->toBeNull();
 });
