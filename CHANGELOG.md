@@ -1,5 +1,16 @@
 # Changelog
 
+## 2026.11.24
+
+New module `site-details`: the business's global details in one place (WP-106, TPL-263). **Adopt:** bb and tcs now (staging pilots, with kit 2026.11.24 and deploy 2026.11.24); the live sites after their December release. Not Train-ready.
+
+- **One option, `pkde_site_details`:** trading name, legal name, company number, VAT number, registered office; phones (label, E.164 number, how it is shown), emails, WhatsApp; addresses (street, town, county, postcode, country, map link); a weekly opening-hours table with holiday exceptions; social profiles (Instagram, Facebook, LinkedIn, YouTube, TikTok, X, Pinterest, Threads, Google Business Profile, other) in drag order.
+- **Declared and locked:** `config/pkde-site-details.php` returns `type` (local-business, shop, organization), the `values` that seed every field with no stored value, and the `locked` paths (legal name, company number, VAT number and registered office are the usual ones): a locked field always shows the declared value, is read-only in wp-admin and is never stored, even when forced through the page.
+- **The screen:** Settings > Site details, the capability `manage_pkde_site_details` for Administrators and the SEO role (an Editor gets a 403). Phones are checked by the `phone-e164` module's rules and stored in E.164 with the typed form kept for display; emails and links are validated; a value that cannot be read is named and left out.
+- **It feeds Rank Math:** the declared type makes the site an Organization (a LocalBusiness where people visit), and the name, address, phone, email, opening hours and `sameAs` come from here (a value Site details does not have is left to Rank Math).
+- **A read shim for one release:** `get_option('client_phone')`, `client_email`, `client_address` and `client_<network>` answer with the Site details values, so a view that still reads them is right; the options themselves are not touched.
+- Proved in real WordPress on the template stack: the screen as Administrator and the SEO role (403 for an Editor); a save with a bad phone refused by name; a tampered locked field not stored; Rank Math's JSON-LD on the home page showing LocalBusiness with the name, telephone, email, address, Monday opening hours and both social profiles; the shim. Per-location opening hours are in the stored shape but not editable on the screen yet. Pest 120.
+
 ## 2026.11.20.3
 
 New module `legal`: legal documents as their own content (WP-104, TPL-253). **Adopt:** bb (a shop, staging pilot) and cs (after its December release); every other site through a later manager brief. Not Train-ready. Needs kit 2026.11.20.6 for the page and pkde-deploy 2026.11.20.5 for `legal-migrate.php` and the drift rows.
