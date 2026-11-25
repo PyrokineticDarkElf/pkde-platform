@@ -183,6 +183,73 @@ function faq_seo_caps(array $editorCaps, bool $rankMath): array
     return $caps;
 }
 
+// The one FAQPage JSON-LD of a page (WP-105, phase 1, moved out of the theme kit): the kit's FAQ block adds its questions here (faq_schema_add()), the page prints one FAQPage
+// from all of them in the footer, de-duplicated by question; skipped when the site turns it off (filter `pkde_kit/faq_schema`) or Rank Math's own FAQ block is on the page.
+// Defines PKDE_PLATFORM_FAQ_SCHEMA, which the kit looks for; PKDE_PLATFORM_DISABLE=faq switches the whole module off and the kit's copy runs again.
+if (! defined('PKDE_PLATFORM_FAQ_SCHEMA')) {
+    define('PKDE_PLATFORM_FAQ_SCHEMA', true);
+}
+
+/**
+ * The page's FAQ entities so far, merged across every FAQ block and de-duplicated by question (case and spacing ignored). Pass entities to add them; call with none to read.
+ *
+ * @param  list<array<string, mixed>>  $add
+ * @return list<array<string, mixed>>
+ */
+function faq_page_entities(array $add = [], bool $reset = false): array
+{
+    static $all = [];
+
+    if ($reset) {
+        $all = [];
+    }
+
+    foreach ($add as $entity) {
+        $key = strtolower(preg_replace('/\s+/', ' ', (string) ($entity['name'] ?? '')) ?? '');
+
+        if ($key !== '' && ! isset($all[$key])) {
+            $all[$key] = $entity;
+        }
+    }
+
+    return array_values($all);
+}
+
+/** The one FAQPage JSON-LD of the page, or '' when there is nothing to print or the site turned it off (filter `pkde_kit/faq_schema`, or Rank Math's own FAQ block is on the page). */
+function faq_schema_json(): string
+{
+    $entities = faq_page_entities();
+
+    if (! $entities) {
+        return '';
+    }
+
+    if (function_exists('apply_filters') && apply_filters('pkde_kit/faq_schema', true) === false) {
+        return '';
+    }
+
+    if (function_exists('is_singular') && is_singular() && function_exists('has_block') && has_block('rank-math/faq-block')) {
+        return ''; // Rank Math prints its own FAQPage for its block; never twice
+    }
+
+    return '<script type="application/ld+json">' . (function_exists('wp_json_encode') ? wp_json_encode(['@context' => 'https://schema.org', '@type' => 'FAQPage', 'mainEntity' => $entities]) : json_encode(['@context' => 'https://schema.org', '@type' => 'FAQPage', 'mainEntity' => $entities])) . '</script>' . "\n";
+}
+
+/** Add a block's entities to the page's single FAQPage (printed in the footer, once). */
+function faq_schema_add(array $entities): void
+{
+    static $hooked = false;
+
+    faq_page_entities($entities);
+
+    if (! $hooked && function_exists('add_action')) {
+        $hooked = true;
+        add_action('wp_footer', function () {
+            echo faq_schema_json();
+        });
+    }
+}
+
 if (! function_exists('add_action')) {
     return; // outside WordPress (the unit tests load this file for the functions above)
 }
