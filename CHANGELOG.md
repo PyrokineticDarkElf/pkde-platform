@@ -1,5 +1,13 @@
 # Changelog
 
+## 2026.11.25
+
+Eight modules and two additions moved out of the theme kit (WP-105, TPL-276, phase 1). **Adopt:** with `pkde/sage-kit` 2026.11.25 (take both together): bb and tcs now (staging pilots), the others in February. **No change in behaviour:** every option, meta key, filter name, shortcode tag, REST route and hook priority is the kit's own, and each module defines a constant the kit checks, so the two never both run; `PKDE_PLATFORM_DISABLE=<module>` brings the kit's copy back.
+
+- **New modules:** `media` (PNG sub-sizes as WebP, absolute upload URLs in content), `disable-emoji`, `woocommerce-import-slug`, `product-schema` (Rank Math's Product JSON-LD matched to the shop), `relevanssi-woocommerce` (product search sorting), `shortcodes` (`[years_since]`, from bp and rp), `cf7-form-key` (`cf7_form_id()`, `cf7_form_shortcode()`), `cf7-editor-preview` (the `pkde/v1/form-preview` route).
+- **In existing modules:** `faq` owns the page's FAQPage schema (`faq_page_entities()`, `faq_schema_json()`, `faq_schema_add()`); `phone-e164` pushes `generate_lead` to the data layer after a Contact Form 7 submit (a small inline script, the page config carries `lead: true`).
+- Proved on the template stack with each module on and off: the Product and FAQPage JSON-LD, the content image URLs, the emoji script, the contact form and its editor preview route, the importer fields, the search sort fields are identical, and each hook has exactly one owner. Not provable there: WebP files (the container's image editor has no WebP). `docs/modules.md`.
+
 ## 2026.11.24
 
 New module `site-details`: the business's global details in one place (WP-106, TPL-263). **Adopt:** bb and tcs now (staging pilots, with kit 2026.11.24 and deploy 2026.11.24); the live sites after their December release. Not Train-ready.

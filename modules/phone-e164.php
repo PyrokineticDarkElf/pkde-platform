@@ -18,6 +18,10 @@
 
 namespace App\MuPlugins;
 
+if (! defined('PKDE_PLATFORM_PHONE_LEAD')) {
+    define('PKDE_PLATFORM_PHONE_LEAD', true); // the kit's phone.js leaves the generate_lead push to this module (the page config carries `lead`)
+}
+
 use libphonenumber\NumberParseException;
 use libphonenumber\PhoneNumberFormat;
 use libphonenumber\PhoneNumberUtil;
@@ -268,10 +272,15 @@ add_action('wp_footer', function () use ($defaultRegion) {
         return;
     }
 
+    // `lead`: this module pushes the Enhanced Conversions event itself (below), so the kit's phone.js, which used to, leaves it alone (WP-105, phase 1).
     $config = [
         'region' => strtolower($defaultRegion),
         'preferred' => phone_preferred_countries(\Pkde\Platform\setting('PHONE_PREFERRED_COUNTRIES'), $defaultRegion),
+        'lead' => true,
     ];
 
     printf('<script>window.pkdePhone=%s;</script>' . "\n", wp_json_encode($config));
+    // After a successful Contact Form 7 submit, the normalised phone and email the server returned (the `pkde_user_data` of wpcf7_feedback_response above) go to the data layer as
+    // `generate_lead`, which Google Ads Enhanced Conversions reads. Plain JavaScript, no dependency and no build step: it works whether or not the kit's picker script is there.
+    echo '<script>document.addEventListener("wpcf7mailsent",function(e){var r=e.detail&&e.detail.apiResponse,u=r&&r.pkde_user_data;if(!u)return;(window.dataLayer=window.dataLayer||[]).push({event:"generate_lead",user_data:u});});</script>' . "\n";
 }, 5);
