@@ -1,7 +1,7 @@
 <?php
 
 require_once dirname(__DIR__, 2) . '/pkde-platform.php';
-require_once dirname(__DIR__, 2) . '/modules/author-archives.php';
+require_once dirname(__DIR__, 2) . '/modules/user-privacy/author-archives.php';
 
 use function App\MuPlugins\author_archive_roles;
 use function App\MuPlugins\author_archive_roles_from_setting;
@@ -33,7 +33,7 @@ it('excludes from the author sitemaps every existing role that is not allowed', 
 });
 
 it('answers the archive of a user without an allowed role with the theme 404, early and uncached, and points the author link home', function () {
-    $source = file_get_contents(dirname(__DIR__, 2) . '/modules/author-archives.php');
+    $source = file_get_contents(dirname(__DIR__, 2) . '/modules/user-privacy/author-archives.php');
 
     expect($source)->toContain("add_action('wp', __NAMESPACE__ . '\\\\author_archive_close', 0)")
         ->and($source)->toContain("add_action('template_redirect', __NAMESPACE__ . '\\\\author_archive_close', 1)")
@@ -48,7 +48,7 @@ it('answers the archive of a user without an allowed role with the theme 404, ea
 });
 
 it('has no role hard-coded besides the author default', function () {
-    $source = file_get_contents(dirname(__DIR__, 2) . '/modules/author-archives.php');
+    $source = file_get_contents(dirname(__DIR__, 2) . '/modules/user-privacy/author-archives.php');
 
     expect($source)->not->toContain('team_member')
         ->and($source)->toContain("['author']");

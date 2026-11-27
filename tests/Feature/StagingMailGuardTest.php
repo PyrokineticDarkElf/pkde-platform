@@ -2,7 +2,7 @@
 
 // The mu-plugin defines its pure helpers and then returns early unless WP_ENV is 'staging', so it can be
 // loaded here without WordPress.
-require_once dirname(__DIR__, 2) . '/modules/staging-mail-guard.php';
+require_once dirname(__DIR__, 2) . '/modules/mail/staging-mail-guard.php';
 
 use function App\MailGuard\mask_recipients;
 

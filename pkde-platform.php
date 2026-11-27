@@ -9,7 +9,9 @@
  * License:      GPL-2.0-or-later
  *
  * Switch a module off for one site with PKDE_PLATFORM_DISABLE (a constant in config/application.php or an environment
- * variable), a comma-separated list of module names, for example `google-tag-manager,safe-svg`. Unknown names are ignored.
+ * variable), a comma-separated list of module names, for example `google-tag-manager,safe-svg`. Unknown names are ignored. A module made of parts
+ * (mail, user-privacy, schema, cf7) is switched off whole by its own name, and one part at a time by the part's name, the name it had before the
+ * parts were merged: `post-smtp-env` still switches off only that part of `mail`.
  */
 
 namespace Pkde\Platform;
@@ -25,11 +27,7 @@ function modules(): array
 {
     return [
         'admin-email-notice',
-        'author-archives',
-        'cf7-assets-on-demand',
-        'cf7-editor-preview',
-        'cf7-form-key',
-        'cf7-test-copy',
+        'cf7',
         'coming-soon',
         'content-signal',
         'disable-comments',
@@ -40,27 +38,75 @@ function modules(): array
         'google-tag-manager',
         'hide-wp-version',
         'legal',
-        'local-business-schema',
-        'local-mail-guard',
         'login-slug',
-        'mailpit-smtp',
+        'mail',
         'media',
         'phone-e164',
-        'post-smtp-env',
-        'private-usernames',
-        'product-schema',
         'relevanssi-woocommerce',
-        'rest-users-private',
         'restrict-unfiltered-html',
         'safe-svg',
-        'schema-absolute-urls',
+        'schema',
         'shortcodes',
         'site-details',
-        'staging-mail-guard',
         'staging-safety-net',
+        'user-privacy',
         'woocommerce-import-slug',
         'wordfence-local-dns',
     ];
+}
+
+/**
+ * The parts of the modules made of several files, in load order. A part is modules/<module>/<part>.php or modules/<module>/<part>/<part>.php, and its name is the
+ * name it had as a module of its own, which PKDE_PLATFORM_DISABLE still accepts.
+ *
+ * @return array<string, list<string>>
+ */
+function module_parts(): array
+{
+    return [
+        'cf7' => ['cf7-assets-on-demand', 'cf7-editor-preview', 'cf7-form-key'],
+        'mail' => ['local-mail-guard', 'mailpit-smtp', 'post-smtp-env', 'staging-mail-guard'],
+        'schema' => ['local-business-schema', 'product-schema', 'schema-absolute-urls'],
+        'user-privacy' => ['author-archives', 'private-usernames', 'rest-users-private'],
+    ];
+}
+
+/** The PKDE_PLATFORM_DISABLE list as it stands: the constant, else the environment. */
+function disabled_setting(): string
+{
+    return defined('PKDE_PLATFORM_DISABLE') ? (string) PKDE_PLATFORM_DISABLE : (string) getenv('PKDE_PLATFORM_DISABLE');
+}
+
+/**
+ * The parts of a module that stay on: all of them, less those named in the disabled list.
+ *
+ * @return list<string>
+ */
+function enabled_parts(string $module, string $disabled): array
+{
+    return enabled_modules(module_parts()[$module] ?? [], $disabled);
+}
+
+/** The file of one part of a module, or null. */
+function part_file(string $module, string $part, string $dir = __DIR__ . '/modules'): ?string
+{
+    foreach (["$dir/$module/$part.php", "$dir/$module/$part/$part.php"] as $file) {
+        if (is_file($file)) {
+            return $file;
+        }
+    }
+
+    return null;
+}
+
+/** Loads the parts of a module that are not switched off. Called by the module's own file. */
+function load_parts(string $module): void
+{
+    foreach (enabled_parts($module, disabled_setting()) as $part) {
+        if ($file = part_file($module, $part)) {
+            require_once $file;
+        }
+    }
 }
 
 /**
@@ -109,9 +155,7 @@ function setting(string $name): string
 
 function boot(): void
 {
-    $disabled = defined('PKDE_PLATFORM_DISABLE') ? (string) PKDE_PLATFORM_DISABLE : (string) getenv('PKDE_PLATFORM_DISABLE');
-
-    foreach (enabled_modules(modules(), $disabled) as $name) {
+    foreach (enabled_modules(modules(), disabled_setting()) as $name) {
         if ($file = module_file($name)) {
             require_once $file;
         }

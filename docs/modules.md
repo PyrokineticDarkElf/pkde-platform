@@ -1,5 +1,7 @@
 # Always-on mu-plugins
 
+> **Merged modules.** `mail`, `user-privacy`, `schema` and `cf7` each hold what used to be separate modules, now in `modules/<module>/<part>.php`. A part keeps its old name and `PKDE_PLATFORM_DISABLE` still accepts it (it switches off just that part); the module's own name switches off all of it. `cf7-test-copy` was removed. The headings below keep the old names as part names.
+
 Single-file mu-plugins (loaded automatically by WordPress, no activation needed) for small,
 site-wide behaviour that shouldn't depend on a plugin staying active. For the larger, multi-file
 mu-plugin in this same directory, see [`private-usernames/README.md`](private-usernames/README.md).

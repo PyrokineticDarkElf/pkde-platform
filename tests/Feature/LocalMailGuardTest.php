@@ -1,6 +1,6 @@
 <?php
 
-require_once dirname(__DIR__, 2) . '/modules/local-mail-guard.php';
+require_once dirname(__DIR__, 2) . '/modules/mail/local-mail-guard.php';
 
 use function App\MuPlugins\local_blocked_host;
 use function App\MuPlugins\local_gateway_allowed;
@@ -36,7 +36,7 @@ function run_local_mail_guard(array $constants, array $env = []): array
         function get_option($name) { return $name === "admin_email" ? "dev@example.test" : false; }
         foreach (json_decode($argv[1], true) as $k => $v) { define($k, $v); }
         require ' . var_export(dirname(__DIR__, 2) . '/pkde-platform.php', true) . ';
-        require ' . var_export(dirname(__DIR__, 2) . '/modules/local-mail-guard.php', true) . ';
+        require ' . var_export(dirname(__DIR__, 2) . '/modules/mail/local-mail-guard.php', true) . ';
         $answer = isset($hooks["pre_option_postman_options"]) ? $hooks["pre_option_postman_options"][10][0]() : null;
         class WP_Error { function __construct(public $code = "", public $message = "") {} }
         $live = ["testmode" => "no", "publishable_key" => "pk_live_x", "secret_key" => "sk_live_x", "webhook_secret" => "whsec_x", "test_secret_key" => "sk_test_x", "enabled" => "yes"];

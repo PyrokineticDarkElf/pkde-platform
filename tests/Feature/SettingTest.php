@@ -16,7 +16,7 @@ it('reads a constant first, then the environment, and gives an empty string when
 
 it('is what the modules use instead of testing for a constant', function () {
     foreach (['phone-e164' => 'PHONE_DEFAULT_REGION', 'login-slug' => 'LOGIN_SLUG', 'post-smtp-env' => 'SMTP_HOST', 'content-signal' => 'CONTENT_SIGNAL', 'google-tag-manager' => 'GTM_CONTAINER_ID'] as $module => $name) {
-        $source = file_get_contents(dirname(__DIR__, 2) . "/modules/$module.php");
+        $source = file_get_contents(dirname(__DIR__, 2) . ($module === 'post-smtp-env' ? '/modules/mail/post-smtp-env.php' : "/modules/$module.php"));
 
         expect($source)->toContain("setting('$name')")
             ->and($source)->not->toContain("defined('$name')");

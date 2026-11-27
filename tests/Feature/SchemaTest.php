@@ -1,8 +1,8 @@
 <?php
 
 // Both modules define their pure functions and return before registering a hook when WordPress is not loaded.
-require_once dirname(__DIR__, 2) . '/modules/local-business-schema.php';
-require_once dirname(__DIR__, 2) . '/modules/schema-absolute-urls.php';
+require_once dirname(__DIR__, 2) . '/modules/schema/local-business-schema.php';
+require_once dirname(__DIR__, 2) . '/modules/schema/schema-absolute-urls.php';
 
 use function App\MuPlugins\opening_hours_specification;
 use function App\MuPlugins\schema_absolute_urls;

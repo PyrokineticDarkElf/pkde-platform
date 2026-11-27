@@ -13,13 +13,30 @@ if (! defined('PKDE_PLATFORM_DISABLE_EMOJI')) {
     define('PKDE_PLATFORM_DISABLE_EMOJI', true);
 }
 
+/**
+ * The hooks that print WordPress's emoji script and styles: [hook, function, priority]. WordPress 6.4 moved the styles to wp_enqueue_emoji_styles on
+ * wp_enqueue_scripts (and admin_enqueue_scripts), so removing print_emoji_styles alone left an inline stylesheet on every page; the older hooks stay for older cores.
+ *
+ * @return list<array{0: string, 1: string, 2: int}>
+ */
+function emoji_hooks(): array
+{
+    return [
+        ['wp_head', 'print_emoji_detection_script', 7],
+        ['wp_print_styles', 'print_emoji_styles', 10],
+        ['admin_print_scripts', 'print_emoji_detection_script', 10],
+        ['admin_print_styles', 'print_emoji_styles', 10],
+        ['wp_enqueue_scripts', 'wp_enqueue_emoji_styles', 10],
+        ['admin_enqueue_scripts', 'wp_enqueue_emoji_styles', 10],
+    ];
+}
+
 if (! function_exists('add_action')) {
     return; // loaded outside WordPress (the Pest tests)
 }
 
 add_action('init', function () {
-    remove_action('wp_head', 'print_emoji_detection_script', 7);
-    remove_action('wp_print_styles', 'print_emoji_styles');
-    remove_action('admin_print_scripts', 'print_emoji_detection_script');
-    remove_action('admin_print_styles', 'print_emoji_styles');
+    foreach (emoji_hooks() as [$hook, $function, $priority]) {
+        remove_action($hook, $function, $priority);
+    }
 });

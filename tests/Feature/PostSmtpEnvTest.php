@@ -1,7 +1,7 @@
 <?php
 
 // The module defines its pure helpers and returns early outside WordPress, so it loads here without WordPress.
-require_once dirname(__DIR__, 2) . '/modules/post-smtp-env.php';
+require_once dirname(__DIR__, 2) . '/modules/mail/post-smtp-env.php';
 
 use function App\MuPlugins\post_smtp_env_problem;
 use function App\MuPlugins\post_smtp_env_stale;
@@ -48,7 +48,7 @@ it('finds the wanted values that the stored option lacks or holds differently, c
 });
 
 it('never lists a password as a value to store', function () {
-    $source = file_get_contents(dirname(__DIR__, 2) . '/modules/post-smtp-env.php');
+    $source = file_get_contents(dirname(__DIR__, 2) . '/modules/mail/post-smtp-env.php');
 
     expect($source)->not->toMatch("/'(basic_auth_password|password|smtp_password)'\\s*=>/");
 });

@@ -1,6 +1,6 @@
 <?php
 
-require_once dirname(__DIR__, 2) . '/modules/rest-users-private.php';
+require_once dirname(__DIR__, 2) . '/modules/user-privacy/rest-users-private.php';
 
 use function App\MuPlugins\rest_endpoints_without_users;
 use function App\MuPlugins\rest_route_is_users;
@@ -30,7 +30,7 @@ it('removes only the user routes from the endpoint list', function () {
 });
 
 it('is applied through the rest_endpoints filter, for everyone, in every environment', function () {
-    $source = file_get_contents(dirname(__DIR__, 2) . '/modules/rest-users-private.php');
+    $source = file_get_contents(dirname(__DIR__, 2) . '/modules/user-privacy/rest-users-private.php');
 
     expect($source)->toContain("add_filter('rest_endpoints'")
         ->and($source)->toContain('is_user_logged_in()')

@@ -1,7 +1,7 @@
 <?php
 
 // The module defines its pure helper and returns early outside WordPress, so it loads here without WordPress.
-require_once dirname(__DIR__, 2) . '/modules/cf7-assets-on-demand.php';
+require_once dirname(__DIR__, 2) . '/modules/cf7/cf7-assets-on-demand.php';
 
 use function App\MuPlugins\cf7_late_form_action;
 
