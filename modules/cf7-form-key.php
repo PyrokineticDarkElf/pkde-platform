@@ -2,9 +2,9 @@
 
 /**
  * Plugin Name: Contact Form 7 forms by key
- * Description: Finds a Contact Form 7 form by a lookup key kept on the form post as meta `_pkde_form_key` (TPL-186, WP-83), so a theme finds its form without relying on its title (a
+ * Description: Finds a Contact Form 7 form by a lookup key kept on the form post as meta `_pkde_form_key`, so a theme finds its form without relying on its title (a
  *              rename never breaks it) or on an ID (IDs differ between staging and production). `contact` is the standard key of the contact page's form; a site may add its own.
- *              bin/deploy/cf7-form-key.php (pkde-deploy) tags the forms of an existing site; bin/setup tags a new site's. Moved out of the theme kit (WP-105, phase 1): the kit's
+ *              bin/deploy/cf7-form-key.php (pkde-deploy) tags the forms of an existing site; bin/setup tags a new site's. Moved out of the theme kit (phase 1): the kit's
  *              App\form_id() and App\form_shortcode() stay as thin wrappers that call these. Same meta key. Defines PKDE_PLATFORM_CF7_FORM_KEY; switch the module off with
  *              PKDE_PLATFORM_DISABLE=cf7-form-key and the kit's own lookup runs again.
  */

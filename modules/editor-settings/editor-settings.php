@@ -2,7 +2,7 @@
 
 /**
  * Plugin Name: Block editor settings by role
- * Description: What a client's block editor offers (WP-100, the section-based editor). Administrators get the full colour picker and can lock and
+ * Description: What a client's block editor offers (the section-based editor). Administrators get the full colour picker and can lock and
  *              unlock blocks; everyone else works with the site's brand swatches and a curated set of blocks. By the site's own role, not a
  *              custom capability: `manage_options`.
  *               - custom colours and gradients: only Administrators (wp_theme_json_data_theme, and the editor settings, which are per user);

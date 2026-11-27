@@ -2,7 +2,7 @@
 
 /**
  * Plugin Name: Media pipeline
- * Description: Two behaviours of how a site's images are made and printed, moved out of the theme kit so a theme switch no longer changes them (WP-105, phase 1):
+ * Description: Two behaviours of how a site's images are made and printed, moved out of the theme kit so a theme switch no longer changes them (phase 1):
  *              - PNG sub-sizes WordPress generates are saved as WebP at quality 80 (an uploaded PNG's medium_large size is hundreds of KB as PNG, a fraction as WebP);
  *                the uploaded original is never touched; opt out with add_filter('pkde_png_to_webp', '__return_false'); applies to sub-sizes generated after it runs
  *                (regenerate older ones with `wp media regenerate --only-missing`);

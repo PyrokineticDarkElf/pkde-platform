@@ -1,4 +1,4 @@
-// Editors cannot move, duplicate or remove a Section (WP-100, platform editor-settings; loaded for users who are not Administrators only).
+// Editors cannot move, duplicate or remove a Section (platform editor-settings; loaded for users who are not Administrators only).
 // A Section is the kit's sage/section and any block that carries a Brand section theme (class is-style-brand-*). Its CONTENT stays editable: the block `lock`
 // ({ move, remove }) is applied to the block itself, never templateLock "all", which would also stop the writing inside it. Duplicate, Copy, Cut, Group and
 // Ungroup are taken out of the block's options menu. An Administrator keeps every control and can unlock (the lock UI is theirs).

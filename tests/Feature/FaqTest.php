@@ -1,7 +1,7 @@
 <?php
 
 /**
- * The faq module (WP-102): the pure parts. The post type, roles, ordering and cache purge are proved in a real WordPress on the template stack.
+ * The faq module: the pure parts. The post type, roles, ordering and cache purge are proved in a real WordPress on the template stack.
  */
 require_once dirname(__DIR__, 2) . '/modules/faq/faq.php';
 

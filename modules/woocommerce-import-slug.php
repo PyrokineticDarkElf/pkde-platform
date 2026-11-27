@@ -3,7 +3,7 @@
 /**
  * Plugin Name: WooCommerce CSV import: the Slug column
  * Description: Makes the product slug a first-class field of WooCommerce's CSV importer: the mapping screen offers "Slug", and a column headed "Slug" is mapped to it without any
- *              admin step. An import that loses its slug creates new product URLs, so this is catalogue data handling, not looks (WP-105, phase 1, moved out of the theme kit).
+ *              admin step. An import that loses its slug creates new product URLs, so this is catalogue data handling, not looks (phase 1, moved out of the theme kit).
  *              Does nothing without WooCommerce (the filters never fire). Defines PKDE_PLATFORM_WOOCOMMERCE_IMPORT_SLUG, which the kit looks for; switch the module off with
  *              PKDE_PLATFORM_DISABLE=woocommerce-import-slug and the kit's copy runs again.
  */

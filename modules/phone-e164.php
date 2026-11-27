@@ -272,7 +272,7 @@ add_action('wp_footer', function () use ($defaultRegion) {
         return;
     }
 
-    // `lead`: this module pushes the Enhanced Conversions event itself (below), so the kit's phone.js, which used to, leaves it alone (WP-105, phase 1).
+    // `lead`: this module pushes the Enhanced Conversions event itself (below), so the kit's phone.js, which used to, leaves it alone (phase 1).
     $config = [
         'region' => strtolower($defaultRegion),
         'preferred' => phone_preferred_countries(\Pkde\Platform\setting('PHONE_PREFERRED_COUNTRIES'), $defaultRegion),

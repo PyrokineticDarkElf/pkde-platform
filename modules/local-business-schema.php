@@ -12,7 +12,7 @@
 namespace App\MuPlugins;
 
 /**
- * The OpeningHoursSpecification list for the hours Rank Math stores, or [] when the hours should not be printed (WP-91, P-1):
+ * The OpeningHoursSpecification list for the hours Rank Math stores, or [] when the hours should not be printed (P-1):
  *  - Rank Math seeds Monday to Sunday 09:00-17:00 on every install, so an untouched site would otherwise tell search engines it is open all week;
  *    those seven identical rows count as "not set". A business that really is open 09:00-17:00 every day returns true from the filter
  *    `pkde_platform/opening_hours_are_set`.

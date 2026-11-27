@@ -3,7 +3,7 @@
 /**
  * Plugin Name: Disable emoji
  * Description: Drops WordPress's emoji detection script and styles (wp-emoji-release.js on every page, front end and admin). Browsers render emoji natively; the script only
- *              swaps in images for very old ones. Moved out of the theme kit (WP-105, phase 1) so a theme switch no longer brings the script back. Defines
+ *              swaps in images for very old ones. Moved out of the theme kit (phase 1) so a theme switch no longer brings the script back. Defines
  *              PKDE_PLATFORM_DISABLE_EMOJI, which the kit looks for; switch the module off with PKDE_PLATFORM_DISABLE=disable-emoji and the kit's copy runs again.
  */
 

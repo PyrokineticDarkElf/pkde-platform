@@ -3,7 +3,7 @@
 /**
  * Plugin Name: Schema Absolute URLs
  * Description: Rank Math writes a logo or image URL as given in its settings, and a path such as /app/uploads/logo.png is not a valid schema.org URL
- *              (Rich Results and crawlers want an absolute one; WP-91, B-06 / T-4). This turns every site-relative or protocol-relative url, contentUrl,
+ *              (Rich Results and crawlers want an absolute one;B-06 / T-4). This turns every site-relative or protocol-relative url, contentUrl,
  *              thumbnailUrl, logo and image in the JSON-LD into an absolute one on the site's own origin. Absolute URLs are never touched.
  */
 

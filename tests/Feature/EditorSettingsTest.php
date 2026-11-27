@@ -18,7 +18,7 @@ $registered = [
     'woocommerce/cart', 'woocommerce/checkout', 'woocommerce/cart-items-block', 'woocommerce/product-collection',
 ];
 
-/** WP-100 P1-5, run as an Editor and as an Administrator. */
+/** P1-5, run as an Editor and as an Administrator. */
 it('gives an Editor the brand swatches only, no unlocking, and no custom colours or gradients', function () use ($registered) {
     $settings = editor_settings(['canLockBlocks' => true, '__experimentalFeatures' => ['color' => ['custom' => true, 'customGradient' => true, 'palette' => ['theme' => []]]]], false);
 
@@ -150,7 +150,7 @@ it('blocks duplicating a Section at the action, so the menu, the shortcut and an
         ->and($js)->toContain('new MutationObserver( refresh )', 'subscribe( refresh )', "frame.addEventListener( 'load', guardCanvas )")->not->toContain('setInterval');
 });
 
-/** TPL-249: keepSwatches without editorVisible are offered to Administrators only; the data a page renders from is untouched. */
+/** keepSwatches without editorVisible are offered to Administrators only; the data a page renders from is untouched. */
 it('hides the keepSwatches that are not editorVisible from the Editor palette lists, never from an Administrator', function () {
     $palette = [['slug' => 'sage-600', 'color' => '#637972'], ['slug' => 'peach', 'color' => '#f5efe9'], ['slug' => 'sage-tint', 'color' => '#eff1ef']];
     $base = ['colors' => $palette, '__experimentalFeatures' => ['color' => ['palette' => ['theme' => $palette, 'default' => []]]]];

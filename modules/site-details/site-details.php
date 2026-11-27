@@ -2,7 +2,7 @@
 
 /**
  * Plugin Name: Site details
- * Description: One place for the business's global details (WP-106): who it is, how to reach it, where it is, when it is open and where it is on social media. A site declares and seeds them in
+ * Description: One place for the business's global details: who it is, how to reach it, where it is, when it is open and where it is on social media. A site declares and seeds them in
  *              `config/pkde-site-details.php` (in git), people with the capability edit them in wp-admin (Settings > Site details), and the kit's footer, contact template, blocks, components
  *              and shortcodes read them, so the same phone number is never in three places.
  *               - storage: ONE option array, `pkde_site_details`: business (trading name, legal name, company number, VAT number, registered office), phones (label, number in E.164, how it is shown),

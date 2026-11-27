@@ -3,7 +3,7 @@
 /**
  * Plugin Name: Author archives only for real authors
  * Description: WordPress gives every user who has published a post a public archive at /author/<login>/ (and ?author=<id> redirects to it), which
- *              exposes the login name of administrators and editors who only wrote the odd post (user enumeration, WP-88). Only users with an allowed
+ *              exposes the login name of administrators and editors who only wrote the odd post (user enumeration). Only users with an allowed
  *              role keep an author archive; for every other user the archive answers with the theme's normal 404 (not cached by the page cache),
  *              the author link (bylines, schema, the REST `link` field) points at the home page instead, and the sitemaps list only allowed authors.
  *
