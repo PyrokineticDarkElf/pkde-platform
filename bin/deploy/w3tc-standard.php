@@ -13,7 +13,7 @@
  * - Preloader: every 15 minutes WP-Cron warms the next 10 pages of the sitemap, and an edited page is warmed again straight away.
  *   The deploy also warms the first pages right after a release goes live (bin/deploy/activate-release.sh, CACHE_WARM_LIMIT).
  * - OFF: browser cache (it rewrites .htaccess; the CDN and the theme's Asset Cache block cover static files), minify (Vite builds
- *   the assets, and W3TC's minify broke a page's scripts on bp: "wp is not defined"), database cache and object cache (no shared
+ *   the assets, and W3TC's minify broke a page's scripts on a site: "wp is not defined"), database cache and object cache (no shared
  *   memory cache on the host; queries are not the bottleneck).
  *
  * @return array<string,bool|int|string>
@@ -74,7 +74,7 @@ function pkde_w3tc_cache_basket_visitors(): bool
 /**
  * The WP-Cron events W3TC needs for the standard to work: the hourly page-cache cleanup and the sitemap preloader. W3TC registers them itself ONLY
  * when its settings are saved in wp-admin (PgCache_Environment::fix_on_event); applying the standard by script writes the options and leaves the events
- * unscheduled (bb and tcs staging: cached pages 48 hours old against a 24 hour lifetime, a preloader that never ran). w3tc-settings.php schedules the
+ * unscheduled (some sites staging: cached pages 48 hours old against a 24 hour lifetime, a preloader that never ran). w3tc-settings.php schedules the
  * missing ones, the drift check reports them.
  *
  * @param  array<string,bool|int|string>  $standard  pkde_w3tc_standard()

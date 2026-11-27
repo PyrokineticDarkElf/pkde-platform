@@ -14,7 +14,7 @@ use function App\MuPlugins\editor_theme_json;
 $registered = [
     'core/paragraph', 'core/heading', 'core/group', 'core/image', 'core/buttons', 'core/button', 'core/list', 'core/spacer', 'core/block',
     'core/shortcode', 'core/html', 'core/cover', 'core/query', 'core/post-template', 'core/verse', 'core/calendar', 'core/embed',
-    'sage/hero', 'sage/section', 'bb/latest-reviews', 'wpcf7/contact-form-selector', 'contact-form-7/contact-form-selector', 'relevanssi/live-search', 'relevanssi/search-form', 'rank-math/faq-block',
+    'sage/hero', 'sage/section', 'acme/latest-reviews', 'wpcf7/contact-form-selector', 'contact-form-7/contact-form-selector', 'relevanssi/live-search', 'relevanssi/search-form', 'rank-math/faq-block',
     'woocommerce/cart', 'woocommerce/checkout', 'woocommerce/cart-items-block', 'woocommerce/product-collection',
 ];
 
@@ -44,7 +44,7 @@ it('limits an Editor to the curated core blocks plus every kit, site and plugin 
     $allowed = editor_allowed_blocks($registered, false);
 
     expect($allowed)->toContain('core/paragraph', 'core/heading', 'core/group', 'core/image', 'core/buttons', 'core/button', 'core/list', 'core/spacer', 'core/block')
-        ->and($allowed)->toContain('sage/hero', 'sage/section', 'bb/latest-reviews', 'wpcf7/contact-form-selector')
+        ->and($allowed)->toContain('sage/hero', 'sage/section', 'acme/latest-reviews', 'wpcf7/contact-form-selector')
         ->and($allowed)->not->toContain('rank-math/faq-block') // hidden from the inserter for everyone
         ->and($allowed)->not->toContain('core/shortcode', 'core/html', 'core/cover', 'core/query', 'core/post-template', 'core/verse', 'core/calendar', 'core/embed')
         ->and($allowed)->not->toContain('woocommerce/cart', 'woocommerce/checkout', 'woocommerce/product-collection');
@@ -104,7 +104,7 @@ it('hides Rank Math\'s blocks from the inserter and leaves every other block\'s 
 });
 
 it('removes WordPress\'s and WooCommerce\'s bundled patterns and keeps the kit\'s and a site\'s', function () {
-    $names = ['core/text-two-columns', 'core/query-large-title-posts', 'woocommerce/product-hero', 'woocommerce-blocks/featured-products-5-item-grid', 'woocommerce-blocks/hero-product-3-split', 'pkde/hero-split', 'pkde/page-about', 'bb/own-section'];
+    $names = ['core/text-two-columns', 'core/query-large-title-posts', 'woocommerce/product-hero', 'woocommerce-blocks/featured-products-5-item-grid', 'woocommerce-blocks/hero-product-3-split', 'pkde/hero-split', 'pkde/page-about', 'acme/own-section'];
 
     expect(editor_patterns_to_remove($names))->toBe(['core/text-two-columns', 'core/query-large-title-posts', 'woocommerce/product-hero', 'woocommerce-blocks/featured-products-5-item-grid', 'woocommerce-blocks/hero-product-3-split'])
         ->and(editor_patterns_to_remove(['pkde/cta']))->toBe([]);

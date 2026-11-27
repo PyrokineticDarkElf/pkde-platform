@@ -127,8 +127,8 @@ function pkde_drift_line_diff(string $a, string $b): int
 
 /**
  * The theme's overrides of kit views (resources/views/vendor/pkde-kit/**) against the kit's current view of the same path: how many lines differ, and whether
- * the override is identical to the kit's (then it can be deleted). A copy of a view falls behind the kit without any test failing (bb's category tiles lost the "Shop all"
- * tile, tcs's product card lost the rating position); this makes it visible. Read only. Returns path => lines that differ (0 = identical), or null when there is no kit.
+ * the override is identical to the kit's (then it can be deleted). A copy of a view falls behind the kit without any test failing (a site's category tiles lost the "Shop all"
+ * tile, a site's product card lost the rating position); this makes it visible. Read only. Returns path => lines that differ (0 = identical), or null when there is no kit.
  *
  * @return array<string, int>|null
  */
@@ -495,7 +495,7 @@ function pkde_drift_evaluate(array $f): array
         $add($ok ? 'PASS' : ($devSkip && $dev ? 'SKIP' : 'FAIL'), $check, $ok ? '' : $detail);
     };
 
-    // The environment as .env declares it (bp): a .env split between environments (a production WP_ENV with a staging
+    // The environment as .env declares it: a .env split between environments (a production WP_ENV with a staging
     // DISALLOW_INDEXING, or a staging file copied to production) looks clean row by row. Only when the facts carry WP_ENV.
     if (array_key_exists('wp_env', $f)) {
         $wpEnv = (string) $f['wp_env'];
@@ -512,7 +512,7 @@ function pkde_drift_evaluate(array $f): array
         }
     }
 
-    // Some staging sites run Wordfence and some do not (rp, tcs, mds, jsd and cs have it active; facts, 2026-11-13). Inactive on staging is a SKIP, not a FAIL,
+    // Some staging sites run Wordfence and some do not (several sites have it active; facts, 2026-11-13). Inactive on staging is a SKIP, not a FAIL,
     // and only while it really is inactive. An ACTIVE Wordfence on staging is held to the whole standard, loginSec_disableAuthorScan included.
     $wfOffOnStaging = ($f['env'] ?? '') === 'staging' && ! in_array('wordfence', (array) ($f['active_plugins'] ?? []), true);
 
@@ -576,7 +576,7 @@ function pkde_drift_evaluate(array $f): array
         }
     }
 
-    // W3TC's working parts beyond its options (bb and tcs staging, 2026-11-05): the page cache only serves with WP_CACHE true, the cleanup and
+    // W3TC's working parts beyond its options (some sites staging, 2026-11-05): the page cache only serves with WP_CACHE true, the cleanup and
     // preload events must be scheduled (applying the standard by script does not schedule them; w3tc-settings.php does), and the newest cached page
     // must be younger than the lifetime, or the preloader and the garbage collection are not running (WP-Cron needs visits, or a server-side cron).
     // Only when the facts carry them, and only while the page cache is switched on.

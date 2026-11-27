@@ -1,7 +1,7 @@
 <?php
 
 /**
- * The pure parts of bin/deploy/apply-pages.php (from bb's config/content/apply-pages.php): mapping the pictures of a page's blocks to attachments by file name, and
+ * The pure parts of bin/deploy/apply-pages.php (from a site's config/content/apply-pages.php): mapping the pictures of a page's blocks to attachments by file name, and
  * the placeholders a page file may hold. No WordPress call is made here except through the callables the caller passes, so Pest tests it.
  */
 

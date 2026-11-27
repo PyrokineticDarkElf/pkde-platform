@@ -8,7 +8,7 @@
 # value = the literal right-hand side of the line (quotes and ${...} kept), sections named after the comment blocks of .env.example. It only creates: an item that
 # already exists is refused (edit it in 1Password). --dry-run reads the server and prints the variable and section NAMES, creates nothing.
 # Values are never printed or put on a command line: the item is sent to `op item create` as JSON on stdin. Afterwards: env-pull.sh ... --check must say MATCHES.
-# Same ssh names as env-pull.sh (PROD_SSH_HOST, PROD_SSH_PORT, PROD_SSH_USER, PROD_DEPLOY_PATH; staging: STAGING_*). The tcs and bb notes already exist in the work account.
+# Same ssh names as env-pull.sh (PROD_SSH_HOST, PROD_SSH_PORT, PROD_SSH_USER, PROD_DEPLOY_PATH; staging: STAGING_*). The notes of the existing sites already exist in the work account.
 set -uo pipefail
 set +x
 command -v op >/dev/null 2>&1 || { echo "env-seed: the 1Password CLI (op) is not installed" >&2; exit 1; }

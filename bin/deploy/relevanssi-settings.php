@@ -1,7 +1,7 @@
 <?php
 
 /**
- * Relevanssi settings for the shop search, in any environment (from tcs). Lived in pkde-sage-kit/bin until 2026.11.19.10; operator scripts belong here. Idempotent; rebuilds the index at the end.
+ * Relevanssi settings for the shop search, in any environment. Lived in pkde-sage-kit/bin until 2026.11.19.10; operator scripts belong here. Idempotent; rebuilds the index at the end.
  *
  * - Products only (the search is a product search), with the short description, the SKU and every product taxonomy that holds words a
  *   customer types: categories, tags, brands and all attribute taxonomies (colour, material ...).
@@ -12,7 +12,7 @@
  * - Hidden products and products marked noindex stay out (Relevanssi's WooCommerce and SEO support).
  *
  * Run once per environment, after a deploy:  bash bin/deploy/wp.sh eval-file bin/deploy/relevanssi-settings.php   (locally: wp eval-file ../pkde-platform/bin/deploy/relevanssi-settings.php)
- * The free editions of Relevanssi and Relevanssi Live Ajax Search are enough (tcs and bb both use them: relevanssi ^4.28 and
+ * The free editions of Relevanssi and Relevanssi Live Ajax Search are enough (some sites both use them: relevanssi ^4.28 and
  * relevanssi-live-ajax-search ^2.6); Relevanssi Premium works the same.
  */
 if (! function_exists('relevanssi_build_index')) {

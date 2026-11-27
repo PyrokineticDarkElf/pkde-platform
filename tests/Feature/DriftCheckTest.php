@@ -297,7 +297,7 @@ it('requires the login slug to be managed by .env, and never prints it', functio
     expect(pkdeStatuses($facts))->not->toHaveKey($check);
 });
 
-it('fails a .env split between environments: WP_ENV, DISALLOW_INDEXING and STAGING_MAIL_TO (bp)', function () {
+it('fails a .env split between environments: WP_ENV, DISALLOW_INDEXING and STAGING_MAIL_TO', function () {
     $good = array_merge(pkdeGoodFacts(), ['wp_env' => 'production', 'disallow_indexing' => false, 'staging_mail_to' => false]);
     expect(array_keys(pkdeStatuses($good), 'FAIL'))->toBe([]);
 
@@ -334,7 +334,7 @@ it('passes a page cache that serves, is scheduled and is fresh', function () {
         ->and($statuses['W3TC newest cached page is younger than the lifetime'])->toBe('PASS');
 });
 
-it('fails the W3TC rows bb and tcs staging showed: no WP_CACHE, no cron events, a stale cache (2026-11-05)', function () {
+it('fails the W3TC rows some sites staging showed: no WP_CACHE, no cron events, a stale cache (2026-11-05)', function () {
     $noCache = pkdeStatuses(pkdeCacheFacts(['wp_cache' => false]));
     expect($noCache['WP_CACHE is true (the page cache serves)'])->toBe('FAIL');
 
@@ -408,7 +408,7 @@ it('finds the theme views that read the basket, a notice, a cookie or the user, 
     rmdir($dir);
 });
 
-it('never raises the basket-visitor rows on a site without WooCommerce, even if the option is set (rp, bp, mds, jsd are not shops)', function () {
+it('never raises the basket-visitor rows on a site without WooCommerce, even if the option is set', function () {
     $facts = pkdeGoodFacts();
     $facts['woocommerce_active'] = false;
     $facts['cache_basket_visitors'] = true;

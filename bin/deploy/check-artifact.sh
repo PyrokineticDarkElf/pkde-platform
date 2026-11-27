@@ -104,7 +104,7 @@ required=(
     web/app/mu-plugins/pkde-platform/modules/mail/staging-mail-guard.php
     web/app/themes/sage/vendor/pkde/sage-kit/src/KitServiceProvider.php
     web/app/mu-plugins/pkde-platform/modules/user-privacy/private-usernames/private-usernames.php
-    # the security modules every production site relies on (tcs audit): a platform bump that dropped one would otherwise ship
+    # the security modules every production site relies on: a platform bump that dropped one would otherwise ship
     web/app/mu-plugins/pkde-platform/modules/safe-svg.php
     web/app/mu-plugins/pkde-platform/modules/login-slug.php
 )

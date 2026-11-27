@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Polite crawler for a site's SEO inventory and the before/after comparison (compare.py). From the tcs, el and bb crawlers.
+"""Polite crawler for a site's SEO inventory and the before/after comparison (compare.py). From the crawlers of three sites.
 
 Starts from the sitemap index, then follows internal links to category/tag archives and their pagination.
 Writes one row per URL (status, redirect chain, title, description, canonical, robots, H1s, OG, JSON-LD types,
@@ -11,7 +11,7 @@ Public pages only, no login, no personal data. One request every --delay seconds
   python3 ../pkde-platform/bin/deploy/seo/crawl.py --base http://localhost:8092 --urls paths.txt --out /tmp/inventory-new   # exactly live's URL set
   python3 ../pkde-platform/bin/deploy/seo/compare.py docs/seo/baseline-YYYY-MM-DD/inventory-live.csv /tmp/inventory-new.csv
 
---urls FILE (from tcs) crawls exactly the paths in FILE, one per line, and follows no links: the rebuild checked on live's URL set, because a
+--urls FILE (from one of them) crawls exactly the paths in FILE, one per line, and follows no links: the rebuild checked on live's URL set, because a
 rebuild can hide pages (empty categories) its own sitemap then lacks. Make the file from the baseline: the path column of inventory-live.csv.
 A live archive paged with a query string (WooCommerce's ?product-page=N) is in that file with its query string; compare it with --include-query.
 """

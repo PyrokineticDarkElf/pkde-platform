@@ -1,7 +1,7 @@
 <?php
 
 /**
- * Applies a site's page content, kept as files, to the pages it belongs to (from bb's config/content/apply-pages.php). The files are repeatable site content: a staging
+ * Applies a site's page content, kept as files, to the pages it belongs to (from a site's config/content/apply-pages.php). The files are repeatable site content: a staging
  * run and, at the cutover, a production run after the database import give the same pages. Run it with WP-CLI's eval-file; it prints slugs, statuses and counts only.
  *
  *   bash bin/deploy/wp.sh eval-file bin/deploy/apply-pages.php            plan (the default; read-only)
@@ -21,7 +21,7 @@
  *   - saves the current content as a revision, replaces post_content only (title, slug, template, parent and status are kept);
  *   - skips a page whose content already matches (so it can run again, and the second run changes nothing).
  * The deploy ships a top-level content/ folder with the release, next to config/. Without `dir=`, a site that still keeps the files in config/content/pages
- * (bb's first place) is read from there.
+ * is read from there.
  */
 require_once __DIR__ . '/apply-pages-lib.php';
 

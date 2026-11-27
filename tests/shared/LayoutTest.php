@@ -9,7 +9,7 @@ require_once __DIR__ . '/site-root.php';
 |
 | The header, page header, footer, shop and every page container share ONE width (`max-w-content`, the --container-content token)
 | and ONE side padding (the --page-gutter token), so a Section, the header and the footer start and end at the same x. A fixed
-| Tailwind width or px-6 in a view brings the drift back (shop pages 64px inside the header, bb 2026-10-26).
+| Tailwind width or px-6 in a view brings the drift back (shop pages 64px inside the header, 2026-10-26).
 */
 
 function themeFile(string $relative): string

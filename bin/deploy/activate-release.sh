@@ -60,7 +60,7 @@ KEEP="${3:-5}"
 # One run does everything ("all", the default, also what a manual rollback uses). The deploy workflow runs it as TWO separate
 # remote execs on the same SSH connection: "activate" (switch, opcache reset, .htaccess, the fast prune) and then "post" (the
 # flushes, acorn optimize, cache warm-up, languages, and starting the background clean-up of the pruned releases). 20i's gateway
-# seems to close ONE exec channel after about 5 to 6 minutes (tcs run 39599779954 dropped at 5 min 36 s, in the silences of an
+# seems to close ONE exec channel after about 5 to 6 minutes (a site run 39599779954 dropped at 5 min 36 s, in the silences of an
 # rm -rf on NFS and of wp cache flush); splitting keeps each exec short, and each prints how long it ran.
 MODE="${4:-all}"
 if [ "$RELEASE" = previous ]; then
@@ -119,7 +119,7 @@ if [ ! -f "$SHARED_DIR/.env" ]; then
     exit 1
 fi
 
-# A site with W3 Total Cache needs WP_CACHE=true in the env file, or WordPress never loads the page-cache drop-in and every page is built fresh (bb staging,
+# A site with W3 Total Cache needs WP_CACHE=true in the env file, or WordPress never loads the page-cache drop-in and every page is built fresh (a site staging,
 # 2026-11-05: the cache looked configured and served nothing). A warning, never a failure: the release is fine without it.
 if [ -d "$RELEASE_DIR/web/app/plugins/w3-total-cache" ] && ! grep -qE "^WP_CACHE=[\"']?(true|1)" "$SHARED_DIR/.env"; then
     echo "WARN: this site uses W3 Total Cache but $SHARED_DIR/.env has no WP_CACHE=true: the page cache will NOT serve (add the line; see the launch guide, W3TC)." >&2
@@ -182,7 +182,7 @@ ln -s "$SHARED_DIR/.env" "$RELEASE_DIR/.env"
 
 # opcache.revalidate_path=1. 20i's PHP-FPM runs OPcache with revalidate_path off: a script cached under the UNRESOLVED path (current/web/index.php)
 # keeps its bytecode, and that bytecode has the OLD release's directory compiled in (__DIR__), so after the symlink switch the web PHP runs the previous release
-# until an opcache_reset() (tcs staging, 2026-11-18: 6+ minutes after a green deploy every uncached page still came from the previous release; reproduced on
+# until an opcache_reset() (a site staging, 2026-11-18: 6+ minutes after a green deploy every uncached page still came from the previous release; reproduced on
 # PHP-FPM 8.3: with the default the pool serves the old release for good after the switch, a web-side opcache_reset() fixes it, and with this setting set in the
 # docroot's .user.ini the very next request after the switch runs the new release). The setting is INI_ALL, so a per-directory .user.ini may set it; it makes
 # OPcache resolve the real path on each lookup (the realpath cache keeps that cheap). The reset below stays as the second line of defence, and the fresh render
@@ -275,7 +275,7 @@ echo "Activated release $RELEASE -> $CURRENT_LINK"
 
 # curl behind the staging gate (HTTP Basic auth): the credentials come from STAGING_GATE_AUTH in shared/.env and go to curl on stdin as a config line (backslash and
 # quote escaped), so they are on no command line and in no URL (a URL built with -u would print them in -w %{redirect_url} or %{url_effective}: never use those with credentials).
-# Every web request of a switch or a rollback goes through this, so a manual rollback resets the web PHP behind the gate too (tcs staging: "could not request the opcache reset 401").
+# Every web request of a switch or a rollback goes through this, so a manual rollback resets the web PHP behind the gate too (a site staging: "could not request the opcache reset 401").
 gate_curl() {
     local gate
     gate="$(sed -n 's/^STAGING_GATE_AUTH=//p' "$SHARED_DIR/.env" 2>/dev/null | tr -d "\"'\r" | tail -1)" || gate=""
@@ -289,21 +289,21 @@ gate_curl() {
 # --- reset the WEB opcache: the symlink switch alone does not make PHP run the new code ---
 # 20i's PHP-FPM runs with opcache on and revalidate_path=0, so scripts cached under the UNRESOLVED path
 # (current/...) stay cached across the atomic switch above and the web keeps executing the previous release's
-# code (bp saw generator 7.1.2 while core on disk was 7.1.3). A My20i PHP restart did not clear it; one
+# code (a site saw generator 7.1.2 while core on disk was 7.1.3). A My20i PHP restart did not clear it; one
 # opcache_reset() run BY THE WEB POOL did. WP-CLI cannot do it: the CLI has its own separate opcache.
 # So: drop a one-time, unguessably named PHP file into the new release, request it over HTTPS via WP_HOME,
 # and delete it straight away (an EXIT trap covers every way out; a deleted PHP file can still answer for about 10 s on 20i, OPcache
 # revalidates every 10 s on top of the NFS attribute cache, which is harmless here: the name is a random 128-bit token and it prints a few lines). The file also reports which release it runs
 # from, which doubles as a check that the live web server really serves the release just activated.
 #
-# What the probe tells the log (tcs staging, 2026-11-18: the probe answered "serves release X" and every uncached page still came from the
+# What the probe tells the log (a site staging, 2026-11-18: the probe answered "serves release X" and every uncached page still came from the
 # PREVIOUS release for 6+ minutes): the answer's first line is "ok <release>"; the second line says what the pool that answered looks like: whether
 # opcache_reset() returned true (it returns false and the page still prints "ok" when opcache.restrict_api blocks it), the opcache instance (its start
 # time: one value per FPM pool), the worker's pid, the host, and the settings that decide how stale code survives. The probe also clears the worker's
 # realpath cache (opcache_reset() does not) and is then requested OPCACHE_EXTRA_HITS times (default 16) in parallel (hit_all_workers), so that every
 # worker of the pool gets both. Then the FRESH RENDER CHECK (below) proves what the reset is for. Failure to reset only warns; a stale render fails the run.
 rm -f "$OPCACHE_STALE_MARKER"
-# One PHP-FPM worker keeps its OWN realpath cache for as long as realpath_cache_ttl says (20i: long enough that bb and tcs staging served the previous release for
+# One PHP-FPM worker keeps its OWN realpath cache for as long as realpath_cache_ttl says (20i: long enough that some sites staging served the previous release for
 # 6+ minutes) and opcache_reset() does not clear it, only clearstatcache(true) run IN that worker does. Sequential requests all land on the same idle
 # worker, so the probe is requested OPCACHE_EXTRA_HITS times (default 16) IN PARALLEL with ?hold=1, which makes each request sleep for a moment so that the
 # requests spread over distinct workers; every one resets the opcache and clears its realpath cache. The distinct worker pids and opcache instances are counted.
@@ -330,7 +330,7 @@ hit_all_workers() {
         if [ "$w" -gt 0 ]; then
             echo "Web PHP: $hits parallel probe requests reached $w distinct PHP workers in $n opcache instance(s); each reset the opcache and cleared its realpath cache"
         fi
-        # Every request got a worker of its own: the pool may have MORE workers than requests, and a worker that answered none keeps its realpath cache (tcs staging, a pool of more than 16:
+        # Every request got a worker of its own: the pool may have MORE workers than requests, and a worker that answered none keeps its realpath cache (a site staging, a pool of more than 16:
         # stepping back printed BROKEN SITE). Ask again with twice as many, until one worker answers twice (the pool is covered) or the cap.
         if [ "$w" -gt 0 ] && [ "$w" -ge "$hits" ]; then
             if [ "$hits" -lt "$max" ]; then
@@ -360,7 +360,7 @@ reset_web_opcache() {
     printf '%s\n' '<?php if (isset($_GET["hold"])) { usleep(450000); } $r = function_exists("opcache_reset") ? @opcache_reset() : null; clearstatcache(true); $s = function_exists("opcache_get_status") ? @opcache_get_status(false) : null; echo "ok ", basename(dirname(realpath(__DIR__))), "\n"; echo "pool=", $s ? ($s["opcache_statistics"]["start_time"] ?? "?") : "none", " pid=", getmypid(), " reset=", var_export($r, true), " sapi=", PHP_SAPI, " php=", PHP_VERSION, " host=", php_uname("n"), " revalidate_path=", ini_get("opcache.revalidate_path"), " revalidate_freq=", ini_get("opcache.revalidate_freq"), " validate_timestamps=", ini_get("opcache.validate_timestamps"), " restrict_api=", ini_get("opcache.restrict_api") ?: "-", " realpath_ttl=", ini_get("realpath_cache_ttl"), "\n";' > "$OPCACHE_PROBE_FILE"
 
     # The 20i web node can lag a few seconds in resolving the new `current`, and answers 404 for the probe until it does
-    # (bp). Retry on 404 only (default: every 5s, 19 tries, about 90s); the probe file stays in place meanwhile.
+    #. Retry on 404 only (default: every 5s, 19 tries, about 90s); the probe file stays in place meanwhile.
     # Any other failure (403, no connection, timeout) is not a lag and warns at once.
     local tries="${OPCACHE_RETRY_ATTEMPTS:-19}" pause="${OPCACHE_RETRY_INTERVAL:-5}" attempt=1 got=1
     while :; do
@@ -442,7 +442,7 @@ verify_fresh_render() {
                 fi
                 return 0 ;;
             5??)
-                # A 500 can be one worker that still holds the previous release's realpath cache (it answers fine a moment later: tcs staging). Look again a few times, with the
+                # A 500 can be one worker that still holds the previous release's realpath cache (it answers fine a moment later: a site staging). Look again a few times, with the
                 # opcache reset and a short pause, before calling the site broken.
                 if [ "$five" -lt "${PKDE_FRESH_RENDER_5XX_RETRIES:-3}" ]; then
                     five=$((five + 1))
@@ -487,7 +487,7 @@ verify_fresh_render() {
 
     echo "WARN: ================================================================" >&2
     echo "WARN: STALE RELEASE: an uncached page of $url still links $served, but release $RELEASE names $expected." >&2
-    echo "WARN: the web PHP is serving the PREVIOUS release although current points at $RELEASE and the web opcache was reset (tcs staging)." >&2
+    echo "WARN: the web PHP is serving the PREVIOUS release although current points at $RELEASE and the web opcache was reset (seen on a staging site)." >&2
     echo "WARN: check opcache.restrict_api / opcache.revalidate_path / realpath_cache_ttl and whether more than one PHP pool serves the site (see the Web PHP lines above)," >&2
     echo "WARN: restart PHP for the package in the My20i panel, then request the site and re-run this check by hand." >&2
     echo "WARN: ================================================================" >&2
@@ -550,7 +550,7 @@ EOF
     echo "Added the Site Hardening block to $HTACCESS"
 fi
 
-# PHP that must never be requested directly, and SVG that must never run script when opened on its own (rp, bp audits). A
+# PHP that must never be requested directly, and SVG that must never run script when opened on its own. A
 # separate block with its own marker, so every site gets it on its next deploy whatever its Site Hardening block already holds.
 #  - app/uploads/*.php (and .phtml, .phar): nothing in the media library is code; an uploaded or planted PHP file there is not run.
 #  - app/themes/*/**.php: theme PHP (functions.php, block render.php, ...) is only ever included by WordPress, never requested.
@@ -599,7 +599,7 @@ EOF
     echo "Added the Asset Cache block to $HTACCESS"
 fi
 
-# Browser caching for what the Asset Cache block above does not cover (tcs GTmetrix): media in app/uploads (30 days; a replaced
+# Browser caching for what the Asset Cache block above does not cover (a site GTmetrix): media in app/uploads (30 days; a replaced
 # image gets a new file name, and Cloudflare/W3TC revalidate HTML separately) and any theme or plugin asset requested with a ?ver= query
 # (the version changes with the file: one year, immutable). HTML and PHP are untouched. Same env-variable technique as above;
 # appended last so it overrides W3TC's Browser Cache rules; re-added when W3TC drops it. Each part is wrapped in <IfModule>.
@@ -638,7 +638,7 @@ EOF
     echo "Added the XML-RPC Hardening block to $HTACCESS"
 fi
 
-# Query Flood Guard (tcs): a botnet took a WooCommerce shop down by requesting its layered-navigation URLs
+# Query Flood Guard: a botnet took a WooCommerce shop down by requesting its layered-navigation URLs
 # (?filter_colour=a,b,c&query_type_colour=or). WooCommerce runs every combination as an uncached query, and the kit's own filters
 # (sage_filter_*, no links to crawl) never produce these URLs, so Apache answers them 410 Gone before WordPress boots. The rule has to sit BEFORE
 # WordPress's own rules (they send every request that is not a file to index.php with [L]), so it is inserted above "# BEGIN WordPress".
@@ -706,7 +706,7 @@ EOF
 fi
 
 # User INI Guard (/191): web/.user.ini holds the opcache setting on every site and, with Wordfence Extended Protection, the path of the firewall
-# shim. A default Apache serves it (200; checked in Apache 2.4), so it is denied here for every site (20i's own stack already answers 403 on bp, rp, jsd and mds:
+# shim. A default Apache serves it (200; checked in Apache 2.4), so it is denied here for every site (20i's own stack already answers 403 on some sites:
 # belt and braces). <IfModule mod_authz_core.c>: no Apache 2.4 authorisation, no rule and never a 500. Added once, re-added when W3TC drops it.
 if ! grep -q '# BEGIN User INI Guard' "$HTACCESS"; then
     cat >>"$HTACCESS" <<'EOF'
@@ -745,7 +745,7 @@ elif grep -q '# BEGIN Staging Noindex' "$HTACCESS"; then
     echo "Removed the Staging Noindex block from $HTACCESS (WP_ENV is production or unset)"
 fi
 
-# Prove the hardening answers, not just that its marker is in the file (bp, js). A marker proves nothing when the server ignores the
+# Prove the hardening answers, not just that its marker is in the file (two sites). A marker proves nothing when the server ignores the
 # file (AllowOverride, a proxy in front, mod_rewrite off). Each probe path does not exist; the deny rules fire before the file system is
 # consulted, so a working rule answers 403 and a missing one 404. A mismatch warns loudly and never fails the deploy (the release is
 # already live); the warning names the path so a person can look. Skipped without WP_HOME or curl.
@@ -759,7 +759,7 @@ probe_hardening() {
     fi
     token="$(od -An -N8 -tx1 /dev/urandom | tr -d ' \n')"
 
-    # Files that EXIST: 20i's front end answers 404 for a missing file before .htaccess runs (bp saw it on staging), so a path that does not
+    # Files that EXIST: 20i's front end answers 404 for a missing file before .htaccess runs (a site saw it on staging), so a path that does not
     # exist proves nothing. An upload PHP file is written, requested and removed; the theme, mu-plugin and XML-RPC files are already there.
     if [ -d "$SHARED_DIR/uploads" ] && printf '%s\n' '<?php echo "pkde-probe";' > "$SHARED_DIR/uploads/pkde-probe-$token.php" 2>/dev/null; then
         upload_file="$SHARED_DIR/uploads/pkde-probe-$token.php"

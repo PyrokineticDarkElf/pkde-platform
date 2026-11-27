@@ -218,7 +218,7 @@ bash $S $BASE R22 5 >$T/s9c.log 2>&1; rc=$?
 check "wrong release reported: exit 0 and a warning naming it" "[ $rc -eq 0 ] && grep -q \"reports release '19990101000000', not R22\" $T/s9c.log"
 check "wrong release: the file is removed" "[ -z \"\$(ls $BASE/releases/R22/web/zz-opcache-*.php 2>/dev/null)\" ]"
 
-# bp the 20i web node answers 404 for a few seconds after the switch. Retry on 404 only; keep the file meanwhile.
+# a site the 20i web node answers 404 for a few seconds after the switch. Retry on 404 only; keep the file meanwhile.
 : > $T/curl.log; echo notfound2 > $T/curl-mode; mkrelease R24
 OPCACHE_RETRY_INTERVAL=0 bash $S $BASE R24 5 >$T/s9e.log 2>&1; rc=$?
 check "404 twice then ok: exit 0 and the success message, no warning" "[ $rc -eq 0 ] && grep -q 'Web opcache reset; the web server serves release R24' $T/s9e.log && ! grep -q 'WARN: could not request' $T/s9e.log"

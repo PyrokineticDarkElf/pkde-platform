@@ -124,7 +124,7 @@ it('recognises a heading that introduces FAQs', function () {
     expect(pkde_faq_heading_matches('Our story'))->toBeFalse()->and(pkde_faq_heading_matches('Contact us'))->toBeFalse();
 });
 
-it('finds core Details blocks under an F.A.Q. heading as one FAQ block (tcs: five on the contact page), the heading becoming the block heading', function () use ($render, $serialize) {
+it('finds core Details blocks under an F.A.Q. heading as one FAQ block (a site: five on the contact page), the heading becoming the block heading', function () use ($render, $serialize) {
     $blocks = [
         ['blockName' => 'core/paragraph', 'attrs' => [], 'innerBlocks' => [], 'innerHTML' => '<p>Call us.</p>'],
         pkdeFiller(),
@@ -251,7 +251,7 @@ it('el: a heading in a SIBLING Group of the same Section heads the Details run; 
         ->and(pkde_faq_loose_details($blocks))->toBe(0);
 });
 
-it('tcs: a heading two levels down in an intro Group beside the questions Group heads the run; the intro stays because it holds more than the heading', function () use ($pkdeGroup, $pkdePara, $pkdeFaq) {
+it('a site: a heading two levels down in an intro Group beside the questions Group heads the run; the intro stays because it holds more than the heading', function () use ($pkdeGroup, $pkdePara, $pkdeFaq) {
     $blocks = [['blockName' => 'sage/section', 'attrs' => [], 'innerHTML' => '', 'innerContent' => [], 'innerBlocks' => [
         $pkdeGroup([
             $pkdeGroup([$pkdeGroup([pkdeHeading('F.A.Q.'), pkdeHeading('General Questions')], ['layout' => ['type' => 'flex']]), $pkdePara('Ask away.')]),

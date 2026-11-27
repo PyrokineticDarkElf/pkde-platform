@@ -223,7 +223,7 @@ def probe(home, rollback, pause=3):
     if not url.startswith('http') or '${' in url or 'localhost' in url:
         print('No probe (WP_HOME is not a public URL).')
         return
-    # Two tries of 15 s with a pause: the first request after a .env change can be a cold, uncached render (jsd staging: 4.5 s, and one
+    # Two tries of 15 s with a pause: the first request after a .env change can be a cold, uncached render (a site staging: 4.5 s, and one
     # "answered nothing" while the site answered 200 right afterwards).
     code = 0
     for attempt in (1, 2):

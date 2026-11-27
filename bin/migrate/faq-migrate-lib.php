@@ -209,7 +209,7 @@ function pkde_faq_finish_scope(array $blocks, bool $used): array
  * A run of one or more consecutive core Details blocks is one FAQ block (kind `details`, a virtual block whose inner blocks are the Details blocks) when a heading that matches
  * pkde_faq_heading_matches() comes directly before it (the heading is then the FAQ block's heading and the replacement takes its place), or when the Group or Section it
  * sits in has such a heading (the heading stays where it is), or, failing both, when a matching heading appears ANYWHERE inside the nearest enclosing Section (or the
- * top-level Group when there is no Section), at any depth and before the run in document order, not inside a Details block (tcs and el: the heading is in a sibling Group
+ * top-level Group when there is no Section), at any depth and before the run in document order, not inside a Details block (two sites: the heading is in a sibling Group
  * of the one that holds the Details). The first such heading is used. It stays where it is and the FAQ block prints none; only when the wrapper Group it sits in holds
  * nothing else is that wrapper removed and the heading becomes the FAQ block's heading. Details blocks anywhere else are not touched; `$loose` counts those runs.
  *

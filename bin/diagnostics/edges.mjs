@@ -74,7 +74,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
         const fullBleed = (el) => { const r = el.getBoundingClientRect(); return r.left <= 1 && r.right >= innerWidth - 1 && !el.matches('.wp-block-sage-section'); };
         const main = document.querySelector('main') || document.body;
         // The page's own text column: a child of the page content grid that sits in its content track and carries no container classes of its own
-        // is prose, narrower than the header by design (48rem). One that carries mx-auto or max-w-* is a container somebody sized by hand (bp's
+        // is prose, narrower than the header by design (48rem). One that carries mx-auto or max-w-* is a container somebody sized by hand (a site's
         // home intro: a section of `mx-auto max-w-3xl px-6` stored in the page content) and is checked like any other container.
         const proseColumn = (el) => {
           for (let a = el; a && a !== main; a = a.parentElement) {
@@ -106,7 +106,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
           }
         });
         // The painted box (a border, a background, a card) of a block in the page content grid must sit on the header's content edges when it
-        // spans the page measure: text that lines up under a box that sticks out 24px each side still looks misaligned (bp). A narrower
+        // spans the page measure: text that lines up under a box that sticks out 24px each side still looks misaligned. A narrower
         // callout inside the prose column is by design and not checked.
         if (header) {
           const h = content(header);

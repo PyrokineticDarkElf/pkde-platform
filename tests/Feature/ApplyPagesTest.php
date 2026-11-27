@@ -1,7 +1,7 @@
 <?php
 
 /**
- * bin/migrate/apply-pages.php (from bb's script): the pure parts in apply-pages-lib.php. The two steps against a real WordPress (plan, apply, a second plan, a missing page,
+ * bin/migrate/apply-pages.php: the pure parts in apply-pages-lib.php. The two steps against a real WordPress (plan, apply, a second plan, a missing page,
  * a missing picture, a form placeholder) were run on the template stack; the report says so.
  */
 require_once dirname(__DIR__, 2) . '/bin/migrate/apply-pages-lib.php';
