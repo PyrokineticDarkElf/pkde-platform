@@ -51,7 +51,7 @@ const EDITOR_ADMIN_CORE_BLOCKS = [
  */
 function editor_allowed_blocks(array $registered, bool $isAdministrator, array $coreBlocks = EDITOR_CORE_BLOCKS, array $adminOnlyPrefixes = EDITOR_ADMIN_ONLY_NAMESPACES): array
 {
-    // the kit's, the site's and every plugin's blocks (sage/*, bb/*, wpcf7/*, rank-math/*): anything that is neither core nor WooCommerce
+    // the kit's, the site's and every plugin's blocks (sage/*, acme/*, wpcf7/*, rank-math/*): anything that is neither core nor WooCommerce
     $hidden = $isAdministrator ? [] : $adminOnlyPrefixes;
     $own = array_filter($registered, fn($name) => ! str_starts_with($name, 'core/') && ! str_starts_with($name, 'woocommerce/') && ! str_starts_with($name, 'rank-math/') && ! array_filter($hidden, fn($prefix) => str_starts_with($name, $prefix)));
     $allowed = array_merge(array_intersect($coreBlocks, $registered), $own);

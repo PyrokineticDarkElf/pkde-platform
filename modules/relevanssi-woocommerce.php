@@ -4,7 +4,7 @@
  * Plugin Name: Relevanssi and WooCommerce: product search sorting
  * Description: With Relevanssi answering a product search, WooCommerce's own SQL sorting never runs, so the shop's sort choices (price, popularity, rating) are handed to Relevanssi
  *              as the meta fields they sort by, and WooCommerce's "date ID" ordering, which Relevanssi does not read, becomes post_date. Without this a product search sorts by
- *              relevance only (tcs, bb). Moved out of the theme kit (phase 1); the live-search styling, template and routing stay in the kit. Does nothing without
+ *              relevance only. Moved out of the theme kit (phase 1); the live-search styling, template and routing stay in the kit. Does nothing without
  *              Relevanssi (the filter never fires). Defines PKDE_PLATFORM_RELEVANSSI_WOOCOMMERCE, which the kit looks for; switch the module off with
  *              PKDE_PLATFORM_DISABLE=relevanssi-woocommerce and the kit's copy runs again.
  */

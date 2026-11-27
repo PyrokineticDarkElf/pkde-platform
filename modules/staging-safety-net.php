@@ -3,7 +3,7 @@
 /**
  * Plugin Name: Staging Safety Net
  * Description: Whenever WP_ENV is not production (staging, local), the site cannot be found, indexed or bought on, whatever wp-admin says.
- *              The rules are code, not options, so a plugin update or a click cannot undo them (from tcs's staging-safeguards).
+ *              The rules are code, not options, so a plugin update or a click cannot undo them (from a site's staging-safeguards).
  *
  * - Search engines: `X-Robots-Tag: noindex, nofollow` on every response WordPress answers (images and files too, once the deploy has added
  *   its "Staging Noindex" block to the shared .htaccess: bin/deploy/activate-release.sh), `noindex, nofollow` in core's wp_robots and in
@@ -14,7 +14,7 @@
  *   never completed.
  * - A label says this is staging. Staging only (a local site shows none, so local screenshots and tests are unchanged). A small pill in the
  *   bottom-right corner that taps pass through (pointer-events: none), not a bar: the kit's shop filter bar sticks to the bottom of the
- *   viewport on a phone with Apply and Reset, and a full-width label covered it (tcs). Fixed, so it never moves the page.
+ *   viewport on a phone with Apply and Reset, and a full-width label covered it. Fixed, so it never moves the page.
  *
  * Production is never touched: nothing is added when WP_ENV is 'production' or unset (Bedrock's default).
  */

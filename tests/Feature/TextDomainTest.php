@@ -23,9 +23,3 @@ it('uses only the pkde-text and sage text domains', function () {
 
     expect($other)->toBe([]);
 });
-
-it('has no admin notice or form message written as a bare English string', function () {
-    $source = file_get_contents(dirname(__DIR__, 2) . '/modules/cf7-test-copy.php');
-
-    expect($source)->toContain("__('CF7 test copy active until %s: every form mail is also sent to %s.', 'pkde-text')");
-});

@@ -1,0 +1,972 @@
+#!/usr/bin/env bash
+#
+# Runs on the remote 20i host, after a release has already been rsynced into
+# <BASE>/releases/<RELEASE>/ by .github/workflows/deploy.yml. Links the
+# persistent shared state into the new release, flips <BASE>/current to it
+# atomically, best-effort flushes WordPress's cache and rewrite rules, and
+# prunes old releases.
+#
+# Never runs composer/npm — the release was already fully built in CI; this
+# script only ever does symlink/copy/flush/prune work.
+#
+# Usage: activate-release.sh <base_path> <release_timestamp> [keep_count]
+#
+# Rollback, in ONE command: the release name `previous` means the complete release just before the one <BASE>/current points at:
+#
+#   bash <BASE>/activate-release.sh <BASE> previous
+#
+# (the deploy copies this script to <BASE> on every run). It is the same code path as a deploy, so the symlink switch, the opcache reset of the web
+# PHP, the .htaccess blocks and the fresh render check all run again. Run it twice to go back two releases. It rolls back CODE only: the database,
+# uploads and shared/ are not versioned and stay as they are. A specific older release also works: re-run this script with its timestamp, it doesn't
+# care whether RELEASE is newer or older than whatever <BASE>/current currently points at.
+#
+# --- What is persistent, and how (the rule of thumb) -----------------------
+# A release is disposable; anything a plugin or an admin writes at runtime
+# would be lost on the next deploy unless it lives in <BASE>/shared/. There are
+# exactly two ways to keep a runtime file out of the release:
+#
+#   * Served over HTTP (the browser fetches it by URL)  ->  symlink it under
+#     web/ into shared/.     uploads/, ewww/, .htaccess
+#   * Only PHP reads it                                  ->  point the plugin at
+#     shared/ with a path constant set from .env (config/application.php), so
+#     there is no symlink to dangle.   w3tc-config/ (W3TC_CONFIG_DIR),
+#     wflogs/ (WFWAF_LOG_PATH), languages/ (WP_LANG_DIR; a symlinked
+#     languages dir breaks WordPress's language upgrader)
+#
+# Both kinds are created in shared/ here. On the very first run after a path
+# starts being shared, shared/<name> is seeded ONCE from the release that is
+# currently live, so no existing setting or data is lost in the switchover.
+#
+# Disposable on purpose (rebuilt on demand, a cold cache after a code change is
+# desirable): web/app/cache. Carried forward as copies, because they are tiny
+# generated code stubs with no release-specific paths: W3TC's advanced-cache.php
+# and object-cache.php drop-ins (see "drop-ins" below).
+#
+# Wordfence's own "Optimize the Firewall" button stays forbidden: it writes an
+# absolute path to ONE release directory into .user.ini / .htaccess, which then
+# dangles when that release is pruned. Wordfence's default WAF mode needs none
+# of it. A new release simply has no .user.ini, so a previously optimised
+# firewall quietly reverts to the default mode on the next deploy. The one
+# supported way to run the firewall before WordPress is the opt-in
+# WORDFENCE_EXTENDED_PROTECTION=1 in shared/.env (bin/deploy/waf-prepend.sh, below):
+# its prepend file lives in shared/waf at a path that never changes and every
+# release gets a fresh web/.user.ini pointing at it.
+
+set -euo pipefail
+
+BASE="${1:?usage: activate-release.sh <base_path> <release_timestamp> [keep_count] [all|activate|post]}"
+RELEASE="${2:?usage: activate-release.sh <base_path> <release_timestamp> [keep_count] [all|activate|post]}"
+KEEP="${3:-5}"
+# One run does everything ("all", the default, also what a manual rollback uses). The deploy workflow runs it as TWO separate
+# remote execs on the same SSH connection: "activate" (switch, opcache reset, .htaccess, the fast prune) and then "post" (the
+# flushes, acorn optimize, cache warm-up, languages, and starting the background clean-up of the pruned releases). 20i's gateway
+# seems to close ONE exec channel after about 5 to 6 minutes (a site run 39599779954 dropped at 5 min 36 s, in the silences of an
+# rm -rf on NFS and of wp cache flush); splitting keeps each exec short, and each prints how long it ran.
+MODE="${4:-all}"
+if [ "$RELEASE" = previous ]; then
+    CURRENT_NAME="$(basename "$(readlink -f "$BASE/current" 2>/dev/null)")"
+    if [ ! -L "$BASE/current" ] || [ ! -d "$BASE/releases/$CURRENT_NAME" ]; then
+        echo "ERROR: $BASE/current is not a link to a release under $BASE/releases, so there is no 'previous' release to go back to." >&2
+        exit 1
+    fi
+    RELEASE=""
+    # Release names are UTC timestamps (YYYYMMDDHHMMSS), so the name order is the deploy order. A half-copied release (no web/ or vendor/) is skipped.
+    for candidate in $(ls -1 "$BASE/releases" | sort -r); do
+        if [[ "$candidate" < "$CURRENT_NAME" ]] && [ -d "$BASE/releases/$candidate/web" ] && [ -d "$BASE/releases/$candidate/vendor" ]; then
+            RELEASE="$candidate"
+            break
+        fi
+    done
+    if [ -z "$RELEASE" ]; then
+        echo "ERROR: no complete release older than the current one ($CURRENT_NAME) is left under $BASE/releases (kept: $(ls -1 "$BASE/releases" | tr '\n' ' ')). Nothing was changed." >&2
+        exit 1
+    fi
+    echo "Rollback: current is $CURRENT_NAME; activating the previous release $RELEASE (code only; the database and shared/ stay as they are)"
+fi
+case "$MODE" in all|activate|post) ;; *) echo "ERROR: the fourth argument must be all, activate or post (got '$MODE')" >&2; exit 2 ;; esac
+stage() { echo "[+${SECONDS}s] $*"; }
+
+RELEASE_DIR="$BASE/releases/$RELEASE"
+SHARED_DIR="$BASE/shared"
+CURRENT_LINK="$BASE/current"
+# WP-CLI: WP_CLI from the environment wins; otherwise ~/bin/wp (older 20i packages), else the system
+# install at /usr/local/bin/wp (a newer package has no ~/bin).
+if [ -z "${WP_CLI:-}" ]; then
+    if [ -f "$HOME/bin/wp" ]; then WP_CLI="$HOME/bin/wp"; else WP_CLI=/usr/local/bin/wp; fi
+fi
+echo "WP-CLI: $WP_CLI"
+# $HOME is an NFS mount with noexec on this host (confirmed via `mount`), so
+# the phar itself can never be executed directly regardless of its +x bit —
+# it must always be run as `php83 "$WP_CLI"`, not `"$WP_CLI"`. The generic
+# `php` on PATH is a much older system default (8.0 here); `php83` is 20i's
+# per-version binary and matches this project's own PHP >=8.3 requirement.
+PHP_BIN="$(command -v php83 || command -v php)"
+
+OPCACHE_PROBE_FILE=""
+OPCACHE_STALE_MARKER="$SHARED_DIR/.fresh-render-failed"   # written by the activation exec when the fresh render check fails, read (and the run failed) by the post exec
+finish() { rm -f "${OPCACHE_PROBE_FILE:-}"; echo "Exec '$MODE' finished after ${SECONDS}s"; }
+trap finish EXIT
+
+if [ ! -d "$RELEASE_DIR" ]; then
+    echo "ERROR: release dir $RELEASE_DIR not found" >&2
+    exit 1
+fi
+
+if [ ! -f "$SHARED_DIR/.env" ]; then
+    echo "ERROR: $SHARED_DIR/.env does not exist." >&2
+    echo "Create it by hand before the first deploy (see the deployment plan's" >&2
+    echo "one-time setup checklist) — this script never creates or writes it." >&2
+    exit 1
+fi
+
+# A site with W3 Total Cache needs WP_CACHE=true in the env file, or WordPress never loads the page-cache drop-in and every page is built fresh (a site staging,
+# 2026-11-05: the cache looked configured and served nothing). A warning, never a failure: the release is fine without it.
+if [ -d "$RELEASE_DIR/web/app/plugins/w3-total-cache" ] && ! grep -qE "^WP_CACHE=[\"']?(true|1)" "$SHARED_DIR/.env"; then
+    echo "WARN: this site uses W3 Total Cache but $SHARED_DIR/.env has no WP_CACHE=true: the page cache will NOT serve (add the line; see the launch guide, W3TC)." >&2
+fi
+
+# The release that is live right now (empty on the very first deploy, or when
+# re-activating the release that is already current).
+PREV_DIR=""
+if [ -L "$CURRENT_LINK" ]; then
+    PREV_DIR="$(readlink -f "$CURRENT_LINK" || true)"
+    if [ "$PREV_DIR" = "$(readlink -f "$RELEASE_DIR")" ]; then
+        PREV_DIR=""
+    fi
+fi
+
+if [ "$MODE" != post ]; then   # ---- the activation part (modes all and activate) ----
+
+# seed_shared_dir <name> [rsync-args...]
+# Creates shared/<name>. If it did not exist yet and the live release has a real
+# (not symlinked) web/app/<name>, copies that in first so the switch to shared
+# state starts from what is live. Built in a temp dir and renamed into place, so
+# an interrupted copy can never leave a half-seeded shared dir that the next run
+# would then treat as complete. Never touches an existing shared dir.
+seed_shared_dir() {
+    local name="$1"
+    shift
+    local dest="$SHARED_DIR/$name"
+    local src="$PREV_DIR/web/app/$name"
+
+    if [ -d "$dest" ]; then
+        return 0
+    fi
+
+    local tmp="$dest.seeding.$$"
+    rm -rf "$tmp"
+    mkdir -p "$tmp"
+    if [ -n "$PREV_DIR" ] && [ -d "$src" ] && [ ! -L "$src" ]; then
+        rsync -a "$@" "$src/" "$tmp/"
+        echo "Seeded shared/$name from the live release"
+    fi
+    mv "$tmp" "$dest"
+}
+
+mkdir -p "$SHARED_DIR/uploads"
+# W3TC's saved settings. Pointed at via W3TC_CONFIG_DIR in .env.
+seed_shared_dir w3tc-config
+# Wordfence's data (attack data, IP lists, GeoIP). Pointed at via WFWAF_LOG_PATH
+# in .env. config*.php are excluded: Wordfence regenerates them from its own
+# database settings, and they embed the old release's path.
+seed_shared_dir wflogs --exclude 'config*.php'
+# EWWW's lazy-load placeholders (URL-served) and downloaded tool binaries.
+seed_shared_dir ewww
+# Translation packs (core, plugins, themes). web/app/languages is gitignored, so without this every release starts with none and
+# a non-English site shows English strings until packs are reinstalled; they are installed after the flushes below.
+seed_shared_dir languages
+
+# --- link shared resources into this release ---
+rm -f "$RELEASE_DIR/.env"
+ln -s "$SHARED_DIR/.env" "$RELEASE_DIR/.env"
+
+# opcache.revalidate_path=1. 20i's PHP-FPM runs OPcache with revalidate_path off: a script cached under the UNRESOLVED path (current/web/index.php)
+# keeps its bytecode, and that bytecode has the OLD release's directory compiled in (__DIR__), so after the symlink switch the web PHP runs the previous release
+# until an opcache_reset() (a site staging, 2026-11-18: 6+ minutes after a green deploy every uncached page still came from the previous release; reproduced on
+# PHP-FPM 8.3: with the default the pool serves the old release for good after the switch, a web-side opcache_reset() fixes it, and with this setting set in the
+# docroot's .user.ini the very next request after the switch runs the new release). The setting is INI_ALL, so a per-directory .user.ini may set it; it makes
+# OPcache resolve the real path on each lookup (the realpath cache keeps that cheap). The reset below stays as the second line of defence, and the fresh render
+# check proves the result. A host that locks the value shows it in the "Web PHP:" line (revalidate_path=0 although this block is there). Opt out with
+# PKDE_OPCACHE_REVALIDATE_PATH=0 in shared/.env. A first deploy that adds the block takes effect when the pool next reads .user.ini (user_ini.cache_ttl, 300 s).
+PKDE_OPCACHE_REVALIDATE_PATH_FLAG="$(sed -n 's/^PKDE_OPCACHE_REVALIDATE_PATH=//p' "$SHARED_DIR/.env" 2>/dev/null | tr -d "\"'\r" | tail -1)" || PKDE_OPCACHE_REVALIDATE_PATH_FLAG=""
+if [ "$PKDE_OPCACHE_REVALIDATE_PATH_FLAG" != 0 ]; then
+    mkdir -p "$RELEASE_DIR/web"
+    ini="$RELEASE_DIR/web/.user.ini"
+    tmp_ini="$(mktemp)"
+    if [ -f "$ini" ]; then
+        awk -v b='; pkde opcache' -v e='; END pkde opcache' '$0==b{skip=1;next} skip&&$0==e{skip=0;next} !skip{print}' "$ini" > "$tmp_ini"
+        [ -s "$tmp_ini" ] && printf '\n' >> "$tmp_ini"
+    else
+        : > "$tmp_ini"
+    fi
+    printf '%s\n' '; pkde opcache' 'opcache.revalidate_path = 1' '; END pkde opcache' >> "$tmp_ini"
+    cat "$tmp_ini" > "$ini" && chmod 644 "$ini"
+    rm -f "$tmp_ini"
+    echo "OPcache: opcache.revalidate_path=1 set in web/.user.ini (the web PHP then follows the new current at once)"
+else
+    echo "OPcache: revalidate_path block off (PKDE_OPCACHE_REVALIDATE_PATH=0)"
+fi
+
+# Wordfence Extended Protection, only when shared/.env has WORDFENCE_EXTENDED_PROTECTION=1: the firewall's prepend file lives in shared/waf at a path that
+# never changes and this release's web/.user.ini points at it (Wordfence's own installer writes both into the release, where the next release prunes them).
+# A failure here never stops the activation: the firewall then runs as the plugin's normal mode.
+if [ -f "$RELEASE_DIR/bin/deploy/waf-prepend.sh" ]; then
+    bash "$RELEASE_DIR/bin/deploy/waf-prepend.sh" "$RELEASE_DIR" "$SHARED_DIR" "$CURRENT_LINK" || echo "WARN: bin/deploy/waf-prepend.sh failed; the firewall runs in its standard mode" >&2
+fi
+
+rm -rf "$RELEASE_DIR/web/app/uploads"
+ln -s "$SHARED_DIR/uploads" "$RELEASE_DIR/web/app/uploads"
+
+# EWWW builds placeholder URLs from the content URL (/app/ewww/lazy/...), so the
+# folder has to be reachable over HTTP: a symlink under web/, not a path
+# constant to somewhere outside the docroot.
+rm -rf "$RELEASE_DIR/web/app/ewww"
+ln -s "$SHARED_DIR/ewww" "$RELEASE_DIR/web/app/ewww"
+
+# Translation packs are NOT symlinked into the release: a symlinked web/app/languages made WordPress's language upgrader fail
+# ("The destination directory already exists and could not be removed"). The kit's config/application.php sets WP_LANG_DIR to
+# shared/languages instead (config/shared-paths.php: from .env, or found next to the symlinked .env). A stray directory or
+# link from an older design is removed so nothing shadows it.
+rm -rf "$RELEASE_DIR/web/app/languages"
+
+# web/app/cache is per-release and disposable (see the header), but must exist and
+# be writable for W3TC's page cache and minify output to land in it: its
+# .htaccess rules point at /app/cache/... relative to the docroot. Created empty
+# rather than left for the first request to create.
+mkdir -p "$RELEASE_DIR/web/app/cache"
+
+# .htaccess: shared and persistent across releases, not shipped fresh by CI.
+# Wordfence, W3TC and the hardening block below all write their own rules into
+# .htaccess at runtime — treating it as release-local (copied in from
+# web/.htaccess.dist on every deploy, as earlier versions of this script did)
+# would silently wipe those on the very next deploy, the same way it once
+# wiped the plain WordPress rewrite block below. Seed the shared copy once
+# from this release's own .htaccess.dist if it doesn't exist yet, then every
+# release -- this one and every future one -- just symlinks to it.
+if [ ! -f "$SHARED_DIR/.htaccess" ]; then
+    cp "$RELEASE_DIR/web/.htaccess.dist" "$SHARED_DIR/.htaccess"
+fi
+rm -f "$RELEASE_DIR/web/.htaccess"
+ln -s "$SHARED_DIR/.htaccess" "$RELEASE_DIR/web/.htaccess"
+
+# drop-ins: W3TC writes advanced-cache.php / object-cache.php into web/app/ when
+# the page / object cache is switched on. They are generated and gitignored, so
+# a fresh release has neither, and page caching would silently stop until
+# someone re-saved W3TC's settings. Their content only references the plugin
+# directory relative to WP_PLUGIN_DIR (no release path), so a plain copy from the
+# live release is safe. If an admin has switched the feature off, W3TC has
+# already removed the file from the live release and nothing is carried over.
+if [ -n "$PREV_DIR" ]; then
+    for dropin in advanced-cache.php object-cache.php; do
+        if [ -f "$PREV_DIR/web/app/$dropin" ] && [ ! -e "$RELEASE_DIR/web/app/$dropin" ]; then
+            cp -p "$PREV_DIR/web/app/$dropin" "$RELEASE_DIR/web/app/$dropin"
+            echo "Carried $dropin forward from the live release"
+        fi
+    done
+fi
+
+# --- atomic symlink swap ---
+# Build the new symlink under a temp name, then rename it over the old one.
+# Rename is atomic on the same filesystem, so there is no window where
+# `current` points at nothing or at a half-written target.
+ln -sfn "$RELEASE_DIR" "$CURRENT_LINK.tmp"
+mv -Tf "$CURRENT_LINK.tmp" "$CURRENT_LINK"
+echo "Activated release $RELEASE -> $CURRENT_LINK"
+
+# curl behind the staging gate (HTTP Basic auth): the credentials come from STAGING_GATE_AUTH in shared/.env and go to curl on stdin as a config line (backslash and
+# quote escaped), so they are on no command line and in no URL (a URL built with -u would print them in -w %{redirect_url} or %{url_effective}: never use those with credentials).
+# Every web request of a switch or a rollback goes through this, so a manual rollback resets the web PHP behind the gate too (a site staging: "could not request the opcache reset 401").
+gate_curl() {
+    local gate
+    gate="$(sed -n 's/^STAGING_GATE_AUTH=//p' "$SHARED_DIR/.env" 2>/dev/null | tr -d "\"'\r" | tail -1)" || gate=""
+    if [ -n "$gate" ]; then
+        printf 'user = "%s"\n' "$(printf '%s' "$gate" | sed 's/\\/\\\\/g; s/"/\\"/g')" | curl --config - "$@"
+    else
+        curl "$@"
+    fi
+}
+
+# --- reset the WEB opcache: the symlink switch alone does not make PHP run the new code ---
+# 20i's PHP-FPM runs with opcache on and revalidate_path=0, so scripts cached under the UNRESOLVED path
+# (current/...) stay cached across the atomic switch above and the web keeps executing the previous release's
+# code (a site saw generator 7.1.2 while core on disk was 7.1.3). A My20i PHP restart did not clear it; one
+# opcache_reset() run BY THE WEB POOL did. WP-CLI cannot do it: the CLI has its own separate opcache.
+# So: drop a one-time, unguessably named PHP file into the new release, request it over HTTPS via WP_HOME,
+# and delete it straight away (an EXIT trap covers every way out; a deleted PHP file can still answer for about 10 s on 20i, OPcache
+# revalidates every 10 s on top of the NFS attribute cache, which is harmless here: the name is a random 128-bit token and it prints a few lines). The file also reports which release it runs
+# from, which doubles as a check that the live web server really serves the release just activated.
+#
+# What the probe tells the log (a site staging, 2026-11-18: the probe answered "serves release X" and every uncached page still came from the
+# PREVIOUS release for 6+ minutes): the answer's first line is "ok <release>"; the second line says what the pool that answered looks like: whether
+# opcache_reset() returned true (it returns false and the page still prints "ok" when opcache.restrict_api blocks it), the opcache instance (its start
+# time: one value per FPM pool), the worker's pid, the host, and the settings that decide how stale code survives. The probe also clears the worker's
+# realpath cache (opcache_reset() does not) and is then requested OPCACHE_EXTRA_HITS times (default 16) in parallel (hit_all_workers), so that every
+# worker of the pool gets both. Then the FRESH RENDER CHECK (below) proves what the reset is for. Failure to reset only warns; a stale render fails the run.
+rm -f "$OPCACHE_STALE_MARKER"
+# One PHP-FPM worker keeps its OWN realpath cache for as long as realpath_cache_ttl says (20i: long enough that some sites staging served the previous release for
+# 6+ minutes) and opcache_reset() does not clear it, only clearstatcache(true) run IN that worker does. Sequential requests all land on the same idle
+# worker, so the probe is requested OPCACHE_EXTRA_HITS times (default 16) IN PARALLEL with ?hold=1, which makes each request sleep for a moment so that the
+# requests spread over distinct workers; every one resets the opcache and clears its realpath cache. The distinct worker pids and opcache instances are counted.
+# When every parallel request got a worker of its own there may be more workers than requests: the log says so (raise OPCACHE_EXTRA_HITS).
+hit_all_workers() {
+    local url="$1" token="$2" hits="${OPCACHE_EXTRA_HITS:-16}" max="${OPCACHE_MAX_HITS:-64}" i out pids pools w n bg
+    [ "$hits" -gt 0 ] 2>/dev/null || return 0
+    [ "$max" -ge "$hits" ] 2>/dev/null || max="$hits"
+    while :; do
+        out="$(mktemp -d)" || return 0
+        bg=""
+        for i in $(seq 1 "$hits"); do
+            ( gate_curl -fsSL --max-time 30 "$url/zz-opcache-$token.php?hold=1&n=$i" > "$out/$i" 2>/dev/null ) &
+            bg="$bg $!"
+        done
+        # wait for OUR requests only: a bare `wait` would also wait for any other background job of this run
+        # shellcheck disable=SC2086
+        wait $bg
+        pids="$(cat "$out"/* 2>/dev/null | sed -n 's/^pool=[^ ]* pid=\([0-9]*\) .*/\1/p' | sort -u)"
+        pools="$(cat "$out"/* 2>/dev/null | sed -n 's/^pool=\([^ ]*\) .*/\1/p' | sort -u)"
+        rm -rf "$out"
+        w="$(printf '%s\n' "$pids" | grep -c .)" || w=0
+        n="$(printf '%s\n' "$pools" | grep -c .)" || n=0
+        if [ "$w" -gt 0 ]; then
+            echo "Web PHP: $hits parallel probe requests reached $w distinct PHP workers in $n opcache instance(s); each reset the opcache and cleared its realpath cache"
+        fi
+        # Every request got a worker of its own: the pool may have MORE workers than requests, and a worker that answered none keeps its realpath cache (a site staging, a pool of more than 16:
+        # stepping back printed BROKEN SITE). Ask again with twice as many, until one worker answers twice (the pool is covered) or the cap.
+        if [ "$w" -gt 0 ] && [ "$w" -ge "$hits" ]; then
+            if [ "$hits" -lt "$max" ]; then
+                hits=$((hits * 2)); [ "$hits" -gt "$max" ] && hits="$max"
+                echo "Web PHP: every probe request got a worker of its own, so the pool may have more workers; requesting again with $hits"
+                continue
+            fi
+            echo "WARN: every parallel probe request got a worker of its own even at $hits: the pool may have more workers, and a worker that answered none keeps its realpath cache (raise OPCACHE_MAX_HITS)." >&2
+        fi
+        break
+    done
+    [ "$n" -gt 1 ] && echo "WARN: $n different PHP opcache instances answered the probe (more than one pool or node serves this site); each answering one was reset, a pool that answered no request was not." >&2
+    return 0
+}
+reset_web_opcache() {
+    local url token answer first
+    url="$(sed -n 's/^WP_HOME=//p' "$SHARED_DIR/.env" 2>/dev/null | tr -d "\"'\r" | head -1)" || url=""
+    url="${url%/}"
+    if [ -z "$url" ] || ! command -v curl >/dev/null 2>&1; then
+        echo "WARN: cannot reset the web opcache (needs WP_HOME in $SHARED_DIR/.env and curl)." >&2
+        echo "WARN: the web server may keep running the PREVIOUS release's code. Reset it by hand (one web-side opcache_reset())." >&2
+        return 0
+    fi
+
+    token="$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')"
+    OPCACHE_PROBE_FILE="$RELEASE_DIR/web/zz-opcache-$token.php"
+    printf '%s\n' '<?php if (isset($_GET["hold"])) { usleep(450000); } $r = function_exists("opcache_reset") ? @opcache_reset() : null; clearstatcache(true); $s = function_exists("opcache_get_status") ? @opcache_get_status(false) : null; echo "ok ", basename(dirname(realpath(__DIR__))), "\n"; echo "pool=", $s ? ($s["opcache_statistics"]["start_time"] ?? "?") : "none", " pid=", getmypid(), " reset=", var_export($r, true), " sapi=", PHP_SAPI, " php=", PHP_VERSION, " host=", php_uname("n"), " revalidate_path=", ini_get("opcache.revalidate_path"), " revalidate_freq=", ini_get("opcache.revalidate_freq"), " validate_timestamps=", ini_get("opcache.validate_timestamps"), " restrict_api=", ini_get("opcache.restrict_api") ?: "-", " realpath_ttl=", ini_get("realpath_cache_ttl"), "\n";' > "$OPCACHE_PROBE_FILE"
+
+    # The 20i web node can lag a few seconds in resolving the new `current`, and answers 404 for the probe until it does
+    #. Retry on 404 only (default: every 5s, 19 tries, about 90s); the probe file stays in place meanwhile.
+    # Any other failure (403, no connection, timeout) is not a lag and warns at once.
+    local tries="${OPCACHE_RETRY_ATTEMPTS:-19}" pause="${OPCACHE_RETRY_INTERVAL:-5}" attempt=1 got=1
+    while :; do
+        if answer="$(gate_curl -fsSL --max-time 30 "$url/zz-opcache-$token.php" 2>&1)"; then got=0; break; fi
+        case "$answer" in *"error: 404"*) ;; *) break ;; esac
+        [ "$attempt" -ge "$tries" ] && { answer="the web server still answered 404 for the probe after $attempt tries (about $(( (attempt - 1) * pause ))s): it has not resolved the new current yet. ${answer}"; break; }
+        sleep "$pause"; attempt=$((attempt + 1))
+    done
+
+    if [ "$got" -eq 0 ]; then
+        first="${answer%%$'\n'*}"
+        case "$first" in
+            "ok $RELEASE") echo "Web opcache reset; the web server serves release $RELEASE" ;;
+            ok\ *) echo "WARN: the web opcache was reset but the web server reports release '${first#ok }', not $RELEASE: it may still serve the old release." >&2 ;;
+            *) echo "WARN: the opcache reset request returned an unexpected answer: ${answer:0:200}" >&2 ;;
+        esac
+        # what the answering pool looks like, and a reset that did not happen
+        local info="${answer#*$'\n'}"
+        [ "$info" != "$answer" ] && echo "Web PHP: ${info:0:400}"
+        case "$info" in *"reset=false"*) echo "WARN: opcache_reset() returned false in the web pool (opcache.restrict_api?): the reset did NOT happen there." >&2 ;; esac
+        # every PHP worker gets the reset AND clears its own realpath cache (opcache_reset() alone leaves that cache, and a worker whose cache says that `current` is the
+        # old release keeps running it): see hit_all_workers
+        hit_all_workers "$url" "$token"
+        verify_fresh_render "$url" "$token"
+        rm -f "$OPCACHE_PROBE_FILE"; OPCACHE_PROBE_FILE=""
+    else
+        rm -f "$OPCACHE_PROBE_FILE"; OPCACHE_PROBE_FILE=""
+        echo "WARN: ================================================================" >&2
+        echo "WARN: could not request the opcache reset at $url (${answer:0:200})." >&2
+        echo "WARN: the web server may keep running the PREVIOUS release's code until its opcache is cleared." >&2
+        echo "WARN: ================================================================" >&2
+    fi
+    return 0
+}
+
+# --- the FRESH RENDER CHECK: a page nobody has cached must show this release's CSS ---
+# The probe above proves the web server can reach the new release; this proves what the reset is for. It requests the home page with a one-off query
+# string (the page cache does not store a URL with one) and compares the stylesheet it links (assets/app-<hash>.css) with the one in THIS release's Vite
+# manifest. Equal: fine. Different: the web PHP is still running the previous release; the probe is requested again (another reset) and the page re-read,
+# up to 4 times, and a page that still differs after that marks the deploy FAILED (the release stays live; the run ends red at its end, with the reason).
+# It never guesses: when the manifest has no app.css entry, the page cannot be fetched (no answer, a coming-soon gate) or links no such stylesheet,
+# it says so and checks nothing. Behind the staging gate (HTTP Basic auth) it sends the gate's "user:password" from STAGING_GATE_AUTH in shared/.env
+# when that is set (to curl on stdin, never on a command line, never printed); a 401/403 without it, or with a refused one, is "skipped: behind the staging
+# gate". A home page that answers 5xx is a FAILED deploy (the release is live and the run ends red), not "not done": the site is broken.
+# PKDE_FRESH_RENDER_CHECK in shared/.env: fail (default), warn (a mismatch or a 5xx only warns) or off.
+verify_fresh_render() {
+    local url="$1" token="$2" mode expected served manifest page attempt=1 tries=4
+    mode="$(sed -n 's/^PKDE_FRESH_RENDER_CHECK=//p' "$SHARED_DIR/.env" 2>/dev/null | tr -d "\"'\r" | tail -1)" || mode=""
+    case "$mode" in off) echo "Fresh render check: off (PKDE_FRESH_RENDER_CHECK=off)"; return 0 ;; warn) ;; *) mode=fail ;; esac
+
+    manifest="$(ls "$RELEASE_DIR"/web/app/themes/*/public/build/manifest.json 2>/dev/null | head -1)" || manifest=""
+    expected=""
+    [ -n "$manifest" ] && expected="$(tr -d '\n' < "$manifest" | sed -n 's/.*"resources\/css\/app\.css"[^}]*"file": *"\([^"]*\)".*/\1/p')"
+    expected="${expected##*/}"
+    if [ -z "$expected" ]; then
+        echo "Fresh render check: skipped (this release has no Vite manifest entry for resources/css/app.css)"
+        return 0
+    fi
+
+    local gate code body_file="$(mktemp)" five=0
+    gate="$(sed -n 's/^STAGING_GATE_AUTH=//p' "$SHARED_DIR/.env" 2>/dev/null | tr -d "\"'\r" | tail -1)" || gate=""
+
+    while :; do
+        # -w prints the status only; the gate's credentials go to curl on stdin as a config line (backslash and quote escaped), so they are on no command line
+        if [ -n "$gate" ]; then
+            code="$(printf 'user = "%s"\n' "$(printf '%s' "$gate" | sed 's/\\/\\\\/g; s/"/\\"/g')" | curl --config - -sSL -o "$body_file" -w '%{http_code}' --max-time 30 -A 'pkde-deploy-fresh-render-check' "$url/?pkde-fresh-render=$token-$attempt" 2>/dev/null)" || code="000"
+        else
+            code="$(curl -sSL -o "$body_file" -w '%{http_code}' --max-time 30 -A 'pkde-deploy-fresh-render-check' "$url/?pkde-fresh-render=$token-$attempt" 2>/dev/null)" || code="000"
+        fi
+        page="$(cat "$body_file" 2>/dev/null)"
+        case "$code" in
+            200) ;;
+            401|403)
+                rm -f "$body_file"
+                if [ -n "$gate" ]; then
+                    echo "Fresh render check: skipped, the staging gate answered $code to the credentials in STAGING_GATE_AUTH (shared/.env): check them"
+                else
+                    echo "Fresh render check: skipped: behind the staging gate (HTTP $code; set STAGING_GATE_AUTH=user:password in shared/.env to check)"
+                fi
+                return 0 ;;
+            5??)
+                # A 500 can be one worker that still holds the previous release's realpath cache (it answers fine a moment later: a site staging). Look again a few times, with the
+                # opcache reset and a short pause, before calling the site broken.
+                if [ "$five" -lt "${PKDE_FRESH_RENDER_5XX_RETRIES:-3}" ]; then
+                    five=$((five + 1))
+                    echo "WARN: the home page answered HTTP $code once after release $RELEASE was activated; resetting the web PHP again and looking again ($five of ${PKDE_FRESH_RENDER_5XX_RETRIES:-3})" >&2
+                    gate_curl -fsSL --max-time 30 "$url/zz-opcache-$token.php?again=5xx$five" >/dev/null 2>&1 || true
+                    hit_all_workers "$url" "$token"
+                    sleep "${PKDE_FRESH_RENDER_PAUSE:-5}"
+                    continue
+                fi
+                rm -f "$body_file"
+                echo "WARN: ================================================================" >&2
+                echo "WARN: BROKEN SITE: the home page of $url answers HTTP $code after release $RELEASE was activated." >&2
+                echo "WARN: the release is live; read the PHP error log, or roll back: bash $BASE/activate-release.sh $BASE previous" >&2
+                echo "WARN: ================================================================" >&2
+                [ "$mode" = fail ] && printf '%s\n%s\n' "$RELEASE" "http$code" > "$OPCACHE_STALE_MARKER"
+                return 0 ;;
+            *)
+                rm -f "$body_file"
+                echo "Fresh render check: not done, the home page could not be fetched (HTTP $code)" >&2
+                return 0 ;;
+        esac
+        served="$(printf '%s' "$page" | grep -o 'assets/app-[A-Za-z0-9_-]*\.css' | head -1)" || served=""
+        served="${served##*/}"
+        if [ -z "$served" ]; then
+            rm -f "$body_file"
+            echo "Fresh render check: not done, the page links no app-<hash>.css stylesheet"
+            return 0
+        fi
+        [ "$five" -gt 0 ] && echo "WARN: the home page answered a 5xx $five time(s) and then answered 200: a PHP worker had not dropped the previous release's cache yet; it is fine now." >&2
+        if [ "$served" = "$expected" ]; then
+            rm -f "$body_file"
+            echo "Fresh render check: the uncached home page links $served, as this release's manifest does"
+            return 0
+        fi
+        if [ "$attempt" -ge "$tries" ]; then break; fi
+        echo "WARN: fresh render check: the page links $served but this release's manifest names $expected; resetting the web opcache again (attempt $attempt of $tries)" >&2
+        gate_curl -fsSL --max-time 30 "$url/zz-opcache-$token.php?again=$attempt" >/dev/null 2>&1 || true
+        hit_all_workers "$url" "$token"
+        sleep "${PKDE_FRESH_RENDER_PAUSE:-5}"
+        attempt=$((attempt + 1))
+    done
+
+    echo "WARN: ================================================================" >&2
+    echo "WARN: STALE RELEASE: an uncached page of $url still links $served, but release $RELEASE names $expected." >&2
+    echo "WARN: the web PHP is serving the PREVIOUS release although current points at $RELEASE and the web opcache was reset (seen on a staging site)." >&2
+    echo "WARN: check opcache.restrict_api / opcache.revalidate_path / realpath_cache_ttl and whether more than one PHP pool serves the site (see the Web PHP lines above)," >&2
+    echo "WARN: restart PHP for the package in the My20i panel, then request the site and re-run this check by hand." >&2
+    echo "WARN: ================================================================" >&2
+    rm -f "$body_file"
+    if [ "$mode" = fail ]; then
+        printf '%s\n%s\n' "$RELEASE" "stale" > "$OPCACHE_STALE_MARKER"
+    fi
+    return 0
+}
+reset_web_opcache
+
+# --- self-heal the shared .htaccess ---
+# Operates on the shared file directly (the same file the symlink above points
+# at) so a fix here is never lost to the next release. Each block is appended
+# only when its BEGIN marker is missing, so this is idempotent and never
+# rewrites rules another tool (Wordfence, W3TC) put in the file.
+HTACCESS="$SHARED_DIR/.htaccess"
+echo "Checking the shared .htaccess blocks"
+
+# Belt-and-braces on top of dropping `--hard` above and making .htaccess
+# shared: confirmed directly that W3 Total Cache's Browser Cache module
+# regenerates .htaccess from its own known rule sections and drops anything it
+# doesn't recognise — including this block — if that module is ever
+# (re-)enabled from wp-admin. Handles both "exists but missing the block" and
+# "missing entirely" (>> creates the file in the latter case).
+if [ ! -f "$HTACCESS" ] || ! grep -q '# BEGIN WordPress' "$HTACCESS"; then
+    cat >>"$HTACCESS" <<'EOF'
+
+# BEGIN WordPress
+<IfModule mod_rewrite.c>
+RewriteEngine On
+RewriteBase /
+RewriteRule ^index\.php$ - [L]
+RewriteCond %{REQUEST_FILENAME} !-f
+RewriteCond %{REQUEST_FILENAME} !-d
+RewriteRule . /index.php [L]
+</IfModule>
+# END WordPress
+EOF
+    echo "Re-asserted the WordPress rewrite block in $HTACCESS"
+fi
+
+# Source and manifests that ride along in a release but are never meant to be
+# fetched over HTTP (everything under web/ is the docroot). resources/css and
+# friends are deliberately NOT listed: wp-admin enqueues resources/css/admin.css
+# by URL. Wrapped in <IfModule> so an unexpected server config degrades to
+# "no protection" rather than a 500 on every request.
+if ! grep -q '# BEGIN Site Hardening' "$HTACCESS"; then
+    cat >>"$HTACCESS" <<'EOF'
+
+# BEGIN Site Hardening
+<IfModule mod_rewrite.c>
+RewriteEngine On
+RewriteRule ^app/themes/[^/]+/(?:app|bin|config|docs|node_modules|vendor|resources/views)/ - [F,L]
+RewriteRule ^app/themes/[^/]+/(?:composer\.(?:json|lock)|package(?:-lock)?\.json|vite\.config\.[cm]?js|README\.md|LICENSE\.md|\.editorconfig|\.gitignore)$ - [F,L]
+RewriteRule ^app/mu-plugins/ - [F,L]
+</IfModule>
+# END Site Hardening
+EOF
+    echo "Added the Site Hardening block to $HTACCESS"
+fi
+
+# PHP that must never be requested directly, and SVG that must never run script when opened on its own. A
+# separate block with its own marker, so every site gets it on its next deploy whatever its Site Hardening block already holds.
+#  - app/uploads/*.php (and .phtml, .phar): nothing in the media library is code; an uploaded or planted PHP file there is not run.
+#  - app/themes/*/**.php: theme PHP (functions.php, block render.php, ...) is only ever included by WordPress, never requested.
+#  - SVG files: X-Content-Type-Options nosniff and a sandboxing CSP, so an SVG opened directly (not as an <img>) cannot run script even
+#    if one slipped past the sanitiser. Each part is wrapped in <IfModule>: no module = no protection, never a 500.
+if ! grep -q '# BEGIN Upload Hardening' "$HTACCESS"; then
+    cat >>"$HTACCESS" <<'EOF'
+
+# BEGIN Upload Hardening
+<IfModule mod_rewrite.c>
+RewriteEngine On
+RewriteRule ^app/uploads/.*\.(?:php[0-9]?|phtml|phar)$ - [F,L]
+RewriteRule ^app/themes/[^/]+/.*\.php$ - [F,L]
+</IfModule>
+<IfModule mod_headers.c>
+<FilesMatch "\.svgz?$">
+Header set X-Content-Type-Options "nosniff"
+Header set Content-Security-Policy "default-src 'none'; img-src data:; style-src 'unsafe-inline'; sandbox"
+</FilesMatch>
+</IfModule>
+# END Upload Hardening
+EOF
+    echo "Added the Upload Hardening block to $HTACCESS"
+fi
+
+# Long-lived caching for the content-hashed Vite output: public/build/assets/ and the self-hosted fonts under
+# public/build/__laravel_vite_plugin__/fonts/ carry a content hash in their names, so a one-year immutable
+# Cache-Control is safe (a changed file gets a new name). manifest.json and fonts-manifest.json are NOT hashed and
+# are deliberately outside these two paths. LocationMatch is not allowed in .htaccess, so mod_rewrite marks the request
+# with an environment variable and mod_headers keys on it. Appended last, so it overrides any Cache-Control from
+# W3TC's Browser Cache rules; and, like Site Hardening above, re-added when its marker is missing because W3TC
+# regenerates .htaccess and drops blocks it does not know. Each module is wrapped in <IfModule>: no module = no header.
+if ! grep -q '# BEGIN Asset Cache' "$HTACCESS"; then
+    cat >>"$HTACCESS" <<'EOF'
+
+# BEGIN Asset Cache
+<IfModule mod_rewrite.c>
+RewriteEngine On
+RewriteRule ^app/themes/[^/]+/public/build/(?:assets|__laravel_vite_plugin__/fonts)/ - [E=PKDE_HASHED_ASSET:1]
+</IfModule>
+<IfModule mod_headers.c>
+Header set Cache-Control "public, max-age=31536000, immutable" env=PKDE_HASHED_ASSET
+</IfModule>
+# END Asset Cache
+EOF
+    echo "Added the Asset Cache block to $HTACCESS"
+fi
+
+# Browser caching for what the Asset Cache block above does not cover (a site GTmetrix): media in app/uploads (30 days; a replaced
+# image gets a new file name, and Cloudflare/W3TC revalidate HTML separately) and any theme or plugin asset requested with a ?ver= query
+# (the version changes with the file: one year, immutable). HTML and PHP are untouched. Same env-variable technique as above;
+# appended last so it overrides W3TC's Browser Cache rules; re-added when W3TC drops it. Each part is wrapped in <IfModule>.
+if ! grep -q '# BEGIN Upload Cache' "$HTACCESS"; then
+    cat >>"$HTACCESS" <<'EOF'
+
+# BEGIN Upload Cache
+<IfModule mod_rewrite.c>
+RewriteEngine On
+RewriteRule ^app/uploads/.*\.(?:avif|gif|ico|jpe?g|mp4|pdf|png|svgz?|webm|webp|woff2?)$ - [E=PKDE_UPLOAD_ASSET:1]
+RewriteCond %{QUERY_STRING} (?:^|&)ver=
+RewriteRule ^app/(?:themes|plugins|mu-plugins)/.+\.(?:avif|css|gif|ico|jpe?g|js|png|svgz?|webp|woff2?)$ - [E=PKDE_VER_ASSET:1]
+</IfModule>
+<IfModule mod_headers.c>
+Header set Cache-Control "public, max-age=2592000" env=PKDE_UPLOAD_ASSET
+Header set Cache-Control "public, max-age=31536000, immutable" env=PKDE_VER_ASSET
+</IfModule>
+# END Upload Cache
+EOF
+    echo "Added the Upload Cache block to $HTACCESS"
+fi
+
+# XML-RPC is off by default in pkde/platform (disable-xmlrpc); the server refuses the file too, so a site that lost the module (or a bot)
+# never reaches PHP. A site that needs XML-RPC (ALLOW_XMLRPC=true) deletes this block from its shared .htaccess and keeps its marker out of it.
+if ! grep -q '# BEGIN XML-RPC Hardening' "$HTACCESS"; then
+    cat >>"$HTACCESS" <<'EOF'
+
+# BEGIN XML-RPC Hardening
+<IfModule mod_authz_core.c>
+<Files "xmlrpc.php">
+Require all denied
+</Files>
+</IfModule>
+# END XML-RPC Hardening
+EOF
+    echo "Added the XML-RPC Hardening block to $HTACCESS"
+fi
+
+# Query Flood Guard: a botnet took a WooCommerce shop down by requesting its layered-navigation URLs
+# (?filter_colour=a,b,c&query_type_colour=or). WooCommerce runs every combination as an uncached query, and the kit's own filters
+# (sage_filter_*, no links to crawl) never produce these URLs, so Apache answers them 410 Gone before WordPress boots. The rule has to sit BEFORE
+# WordPress's own rules (they send every request that is not a file to index.php with [L]), so it is inserted above "# BEGIN WordPress".
+#  - Matched: a query argument named filter_<name>=, query_type_<name>= or rating_filter= (case-insensitive, at the start or after &).
+#  - NOT matched, by construction: sage_filter_* (the "filter_" is not at the start of the name), and the array-valued filter_product_cat[]= /
+#    filter_product_tag[]= of the earlier custom controls (the name is followed by "[" or "%5B", not "="); the kit stopped migrating those URLs in 2026.11.19.1, so they now do nothing.
+#  - The cap: 120 or more sage_filter_ arguments in one query string is answered 410 as well. The kit's own limit is max_active_groups x
+#    max_values_per_group (6 x 10 = 60 with the defaults) and anything above that is a 404 from WordPress; this is the same refusal one step earlier, with a fixed
+#    number above any legal request. A site that raises both kit limits so that their product exceeds 120 changes the number in its shared .htaccess. The
+#    pattern counts occurrences with an atomic group, so it cannot backtrack, and is anchored at the start so the engine does not rescan from every position (an unanchored version took 650 ms on a 7 kB string): ^(?>.*?(?:^|&)sage_filter_){120}.
+#  - A site that really uses WooCommerce's layered-nav widgets or its Product Filter blocks deletes this block from its shared .htaccess and keeps
+#    it out (the block is only added when its marker is missing; delete the lines, leave a "# BEGIN Query Flood Guard" comment to keep it from coming back).
+# Wrapped in <IfModule>: no mod_rewrite = no protection, never a 500. Re-added when W3TC or Wordfence rewrite the file and drop it.
+if ! grep -q '# BEGIN Query Flood Guard' "$HTACCESS"; then
+    cat >"$HTACCESS.guard" <<'EOF'
+# BEGIN Query Flood Guard
+<IfModule mod_rewrite.c>
+RewriteEngine On
+RewriteCond %{QUERY_STRING} (^|&)(filter_[a-z0-9_-]+|query_type_[a-z0-9_-]+|rating_filter)= [NC]
+RewriteRule ^ - [G,L]
+RewriteCond %{QUERY_STRING} ^(?>.*?(?:^|&)sage_filter_){120}
+RewriteRule ^ - [G,L]
+</IfModule>
+# END Query Flood Guard
+
+EOF
+    if grep -q '# BEGIN WordPress' "$HTACCESS"; then
+        awk 'FNR==NR{block=block $0 "\n"; next} /# BEGIN WordPress/ && !done {printf "%s", block; done=1} {print}' "$HTACCESS.guard" "$HTACCESS" >"$HTACCESS.new" && cat "$HTACCESS.new" >"$HTACCESS"
+    else
+        cat "$HTACCESS.guard" >>"$HTACCESS"
+    fi
+    rm -f "$HTACCESS.guard" "$HTACCESS.new"
+    echo "Added the Query Flood Guard block to $HTACCESS"
+elif block="$(awk '/# BEGIN Query Flood Guard/{f=1} f{print} /# END Query Flood Guard/{f=0}' "$HTACCESS")" && printf '%s' "$block" | grep -q '^RewriteRule' && ! printf '%s' "$block" | grep -q 'sage_filter_){'; then
+    # A block from before the cap (2026.11.19.1 to .6) that still has its rule gets the cap pair; a block a site emptied (markers only) stays empty.
+    awk '/# BEGIN Query Flood Guard/{inb=1} inb && /<\/IfModule>/ && !done {print "RewriteCond %{QUERY_STRING} ^(?>.*?(?:^|&)sage_filter_){120}"; print "RewriteRule ^ - [G,L]"; done=1} /# END Query Flood Guard/{inb=0} {print}' "$HTACCESS" >"$HTACCESS.new" && cat "$HTACCESS.new" >"$HTACCESS"
+    rm -f "$HTACCESS.new"
+    echo "Added the sage_filter_ cap to the Query Flood Guard block in $HTACCESS"
+fi
+
+# Security headers: the four every response should carry, set once for the whole site in the shared .htaccess and re-added when W3TC
+# drops them. `always` also covers error pages and redirects. Chosen so nothing the template uses breaks:
+#  - X-Content-Type-Options nosniff: a file is only what its Content-Type says.
+#  - Referrer-Policy strict-origin-when-cross-origin: same-origin links keep the full referrer, other sites get the origin only (analytics and
+#    Cloudflare Turnstile keep working; nothing sends a full URL to a third party).
+#  - X-Frame-Options SAMEORIGIN: only this site may frame it. The block editor's canvas, the Customizer preview and wp-admin's interim login are
+#    same-origin; WooCommerce payment, Turnstile and GTM iframes are OUR page framing THEIR site, which this header does not affect.
+#  - Permissions-Policy: the camera, the microphone and USB are off (no page of the template uses them) and the FLoC cohort id is not sent. Geolocation
+#    and payment are left alone on purpose: a store locator or a payment request button may need them.
+# HSTS is NOT here: it waits for the owner (Cloudflare or this server). A site that must be framed by another origin deletes the X-Frame-Options line in its shared .htaccess:
+# the block is only added when its marker is missing, so an edited block stays as it is. Each header is inside <IfModule mod_headers.c>: no module = no header.
+if ! grep -q '# BEGIN Security Headers' "$HTACCESS"; then
+    cat >>"$HTACCESS" <<'EOF'
+
+# BEGIN Security Headers
+<IfModule mod_headers.c>
+Header always set X-Content-Type-Options "nosniff"
+Header always set Referrer-Policy "strict-origin-when-cross-origin"
+Header always set X-Frame-Options "SAMEORIGIN"
+Header always set Permissions-Policy "camera=(), microphone=(), usb=(), interest-cohort=()"
+</IfModule>
+# END Security Headers
+EOF
+    echo "Added the Security Headers block to $HTACCESS"
+fi
+
+# User INI Guard (/191): web/.user.ini holds the opcache setting on every site and, with Wordfence Extended Protection, the path of the firewall
+# shim. A default Apache serves it (200; checked in Apache 2.4), so it is denied here for every site (20i's own stack already answers 403 on some sites:
+# belt and braces). <IfModule mod_authz_core.c>: no Apache 2.4 authorisation, no rule and never a 500. Added once, re-added when W3TC drops it.
+if ! grep -q '# BEGIN User INI Guard' "$HTACCESS"; then
+    cat >>"$HTACCESS" <<'EOF'
+
+# BEGIN User INI Guard
+<Files ".user.ini">
+<IfModule mod_authz_core.c>
+Require all denied
+</IfModule>
+</Files>
+# END User INI Guard
+EOF
+    echo "Added the User INI Guard block to $HTACCESS"
+fi
+
+# Staging Noindex: on a server whose .env says WP_ENV is not production, every response, static files included, carries
+# X-Robots-Tag: noindex, nofollow. The platform module staging-safety-net sends the same header for what WordPress answers; images, PDFs and
+# the rest never reach PHP, so only the web server can cover them. The block is ADDED where WP_ENV is staging or any other non-production
+# value and REMOVED where it is production or unset, so a staging .htaccess copied to production cannot keep the site out of search.
+# Re-asserted every release (W3TC drops blocks it does not know). Wrapped in <IfModule>: no mod_headers = no header, never a 500.
+WP_ENV_VALUE="$(sed -n 's/^WP_ENV=//p' "$SHARED_DIR/.env" 2>/dev/null | tr -d "\"'\r" | head -1)" || WP_ENV_VALUE=""
+if [ -n "$WP_ENV_VALUE" ] && [ "$WP_ENV_VALUE" != "production" ]; then
+    if ! grep -q '# BEGIN Staging Noindex' "$HTACCESS"; then
+        cat >>"$HTACCESS" <<'EOF'
+
+# BEGIN Staging Noindex
+<IfModule mod_headers.c>
+Header set X-Robots-Tag "noindex, nofollow"
+</IfModule>
+# END Staging Noindex
+EOF
+        echo "Added the Staging Noindex block to $HTACCESS (WP_ENV=$WP_ENV_VALUE)"
+    fi
+elif grep -q '# BEGIN Staging Noindex' "$HTACCESS"; then
+    awk '/# BEGIN Staging Noindex/{skip=1} !skip{print} /# END Staging Noindex/{skip=0}' "$HTACCESS" >"$HTACCESS.tmp" && cat "$HTACCESS.tmp" >"$HTACCESS" && rm -f "$HTACCESS.tmp"
+    echo "Removed the Staging Noindex block from $HTACCESS (WP_ENV is production or unset)"
+fi
+
+# Prove the hardening answers, not just that its marker is in the file (two sites). A marker proves nothing when the server ignores the
+# file (AllowOverride, a proxy in front, mod_rewrite off). Each probe path does not exist; the deny rules fire before the file system is
+# consulted, so a working rule answers 403 and a missing one 404. A mismatch warns loudly and never fails the deploy (the release is
+# already live); the warning names the path so a person can look. Skipped without WP_HOME or curl.
+probe_hardening() {
+    local url token code path expected failed=0 theme muplugin upload_file="" probes=()
+    url="$(sed -n 's/^WP_HOME=//p' "$SHARED_DIR/.env" 2>/dev/null | tr -d "\"'\r" | head -1)" || url=""
+    url="${url%/}"
+    if [ -z "$url" ] || ! command -v curl >/dev/null 2>&1; then
+        echo "WARN: hardening probe skipped (needs WP_HOME in $SHARED_DIR/.env and curl): the .htaccess deny rules were NOT verified." >&2
+        return 0
+    fi
+    token="$(od -An -N8 -tx1 /dev/urandom | tr -d ' \n')"
+
+    # Files that EXIST: 20i's front end answers 404 for a missing file before .htaccess runs (a site saw it on staging), so a path that does not
+    # exist proves nothing. An upload PHP file is written, requested and removed; the theme, mu-plugin and XML-RPC files are already there.
+    if [ -d "$SHARED_DIR/uploads" ] && printf '%s\n' '<?php echo "pkde-probe";' > "$SHARED_DIR/uploads/pkde-probe-$token.php" 2>/dev/null; then
+        upload_file="$SHARED_DIR/uploads/pkde-probe-$token.php"
+        probes+=("/app/uploads/pkde-probe-$token.php")
+    fi
+    theme="$(ls -d "$RELEASE_DIR"/web/app/themes/*/functions.php 2>/dev/null | head -1)" || theme=""
+    if [ -n "$theme" ]; then probes+=("/app/themes/$(basename "$(dirname "$theme")")/functions.php"); fi
+    muplugin="$(ls "$RELEASE_DIR"/web/app/mu-plugins/pkde-platform/pkde-platform.php "$RELEASE_DIR"/web/app/mu-plugins/*.php 2>/dev/null | head -1)" || muplugin=""
+    if [ -n "$muplugin" ]; then probes+=("${muplugin#"$RELEASE_DIR"/web}"); fi
+    if [ -e "$RELEASE_DIR/web/wp/xmlrpc.php" ]; then probes+=("/wp/xmlrpc.php"); fi
+
+    for path in "${probes[@]+"${probes[@]}"}"; do
+        expected=403
+        code="$(gate_curl -s -o /dev/null -w '%{http_code}' --max-time 20 "$url$path" 2>/dev/null)" || code="000"
+        if [ "$code" != "$expected" ]; then
+            sleep 3
+            code="$(gate_curl -s -o /dev/null -w '%{http_code}' --max-time 20 "$url$path" 2>/dev/null)" || code="000"
+        fi
+        if [ "$code" != "$expected" ]; then
+            echo "WARN: hardening probe: $path (a file that exists) answered $code, expected $expected. The .htaccess deny rule is NOT enforced." >&2
+            failed=1
+        fi
+    done
+    if [ -n "$upload_file" ]; then rm -f "$upload_file"; fi
+
+    if [ "${#probes[@]}" -eq 0 ]; then
+        echo "WARN: hardening probe: nothing to probe was found in the release; the deny rules were NOT verified." >&2
+    elif [ "$failed" -eq 0 ]; then
+        echo "Hardening probe: ${#probes[@]} existing PHP file(s) (uploads, theme, mu-plugin, xmlrpc.php) all answer 403"
+    else
+        echo "WARN: ================================================================" >&2
+        echo "WARN: the site hardening in .htaccess is not being enforced by the web server (see above)." >&2
+        echo "WARN: ================================================================" >&2
+    fi
+    return 0
+}
+probe_hardening
+
+# --- prune old releases, keep the newest $KEEP ---
+# Fast: each old release is MOVED into $BASE/.trash (a rename, instant even on NFS) and deleted later in the background by
+# empty_trash, so a slow recursive delete never holds an exec open (one measured rm -rf of a single release was silent for 266 s).
+stage "pruning old releases, keeping the newest $KEEP"
+TRASH="$BASE/.trash"
+mkdir -p "$TRASH"
+cd "$BASE/releases"
+# The release just activated is never pruned, whatever its mtime says (a rollback to an old release, or a smaller KEEP,
+# must not delete the live one, and the flushes below still run from it): keep it plus the newest KEEP-1 others.
+trash_stamp="$(date +%s)"
+{ ls -1t | grep -vxF -- "$RELEASE" || true; } | tail -n "+$KEEP" | xargs -r -I{} mv -- {} "$TRASH/{}.$trash_stamp"   # grep exits 1 when nothing is left (first deploy)
+stage "pruned old releases (moved to .trash), kept newest $KEEP"
+
+fi   # ---- end of the activation part ----
+
+# Deleting what the prune moved into $BASE/.trash: detached (nohup, no inherited file descriptors, so the SSH channel can close), one
+# at a time (a lock directory, stale after two hours), and never waited for. Called as the last thing the post part does.
+TRASH="$BASE/.trash"
+TRASH_LOCK="$BASE/.trash.lock"
+empty_trash() {
+    [ -d "$TRASH" ] || return 0
+    [ -n "$(ls -A "$TRASH" 2>/dev/null)" ] || return 0
+    if ! mkdir "$TRASH_LOCK" 2>/dev/null; then
+        if [ -n "$(find "$TRASH_LOCK" -maxdepth 0 -mmin +120 2>/dev/null)" ]; then
+            rmdir "$TRASH_LOCK" 2>/dev/null && mkdir "$TRASH_LOCK" 2>/dev/null || { echo "Clean-up of .trash is already running"; return 0; }
+        else
+            echo "Clean-up of .trash is already running"
+            return 0
+        fi
+    fi
+    nohup bash -c 'find "$1" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +; rmdir "$2"' _ "$TRASH" "$TRASH_LOCK" </dev/null >/dev/null 2>&1 &
+    echo "Deleting the pruned releases in the background (.trash)"
+}
+
+if [ "$MODE" = activate ]; then
+    stage "activation part done; the post part (flushes, warm-up, languages) is the next exec"
+    exit 0
+fi
+
+if [ "$MODE" = post ] && [ "$(readlink -f "$CURRENT_LINK" 2>/dev/null)" != "$(readlink -f "$RELEASE_DIR")" ]; then
+    echo "WARN: $CURRENT_LINK does not point at release $RELEASE: the post steps are skipped (they must run from the live release)." >&2
+    exit 0
+fi
+
+# --- cache/rewrite flush: best-effort, bounded, runs LAST, never fails the deploy over this ---
+# Deliberately `rewrite flush` (soft, DB-only: updates the `rewrite_rules`
+# option) and NOT `--hard`: confirmed directly that `--hard` makes WordPress
+# attempt to rewrite web/.htaccess itself via save_mod_rewrite_rules(), and
+# in this SSH/CLI context (no real HTTP request, so WordPress's own apache/
+# mod_rewrite detection misfires) that call doesn't just fail to write:
+# it deletes the file outright ("Warning: Regenerating a .htaccess file
+# requires special configuration" is WP-CLI's own signal that this happened,
+# not a harmless no-op). We manage .htaccess ourselves (shared + self-healed,
+# both above), so WordPress never needs to touch the file at all.
+#
+# Last, and bounded, because a WP-CLI call can hang (seen in production: another WP-CLI session on the same site
+# held it for 5 minutes until the gateway dropped the connection and the job failed with 255, after the release was
+# already live). The .htaccess re-assert and the prune above therefore never wait on it, and each call is killed
+# after WP_CLI_TIMEOUT seconds (default 120) with a WARN; the deploy still succeeds.
+WP_CLI_TIMEOUT="${WP_CLI_TIMEOUT:-120}"
+# PHP's command-line memory default (128M on 20i) is not enough once WooCommerce, the caching and security plugins and the site
+# language's translations load: wp cache flush died with "Allowed memory size" at 128M (and the deploy still showed
+# success, because run_wp only warns). Every WP-CLI call gets this much.
+WP_CLI_MEMORY="${WP_CLI_MEMORY:-512M}"
+wp_run() { # <wp args...>: one WP-CLI call in the release, with the memory limit, killed after WP_CLI_TIMEOUT when `timeout` exists
+    if command -v timeout >/dev/null 2>&1; then
+        (cd "$RELEASE_DIR" && timeout -k 10 "$WP_CLI_TIMEOUT" "$PHP_BIN" -d memory_limit="$WP_CLI_MEMORY" "$WP_CLI" "$@")
+    else
+        (cd "$RELEASE_DIR" && "$PHP_BIN" -d memory_limit="$WP_CLI_MEMORY" "$WP_CLI" "$@")
+    fi
+}
+run_wp() { # <wp args...>
+    local rc=0 out detail
+    echo "Running: wp $* (timeout ${WP_CLI_TIMEOUT}s)"
+    command -v timeout >/dev/null 2>&1 || echo "WARN: 'timeout' is not installed, wp $* runs without a time limit" >&2
+    # The output is kept, so a failure's WARN can name its cause ("wp language core install en_GB failed
+    # (exit 1)" said nothing about why). It is printed when the call ends.
+    out="$(mktemp 2>/dev/null)" || out=/dev/null
+    wp_run "$@" >"$out" 2>&1 || rc=$?
+    [ "$out" = /dev/null ] || cat "$out"
+    case "$rc" in
+        0) ;;
+        124|137) echo "WARN: wp $* timed out after ${WP_CLI_TIMEOUT}s and was stopped; the release is live, carrying on" >&2 ;;
+        *)
+            detail=""
+            if [ "$out" != /dev/null ]; then
+                detail="$(grep -v '^[[:space:]]*$' "$out" | { grep -m1 -iE 'error|fatal|warning|failed|denied|memory' || true; } | cut -c1-300)"
+                [ -n "$detail" ] || detail="$(grep -v '^[[:space:]]*$' "$out" | head -1 | cut -c1-300 || true)"
+            fi
+            echo "WARN: wp $* failed (exit $rc)${detail:+: $detail}" >&2
+            ;;
+    esac
+    [ "$out" = /dev/null ] || rm -f "$out"
+    return 0
+}
+if [ -f "$WP_CLI" ]; then
+    stage "flushes"
+    run_wp cache flush
+    run_wp rewrite flush
+
+    # Wordfence's alert recipients are exactly the alert address from .env (WORDFENCE_ALERT_EMAIL, else WP_ADMIN_EMAIL). It changes nothing on a site
+    # that sets neither, or without Wordfence. Warn-only like every step here. It loads no plugin (plain SQL on Wordfence's table, wfconfig-sql.php): a full bootstrap
+    # for one option write is not worth the memory.
+    if [ -f "$RELEASE_DIR/bin/deploy/wordfence-standard.php" ]; then
+        run_wp --skip-plugins --skip-themes eval-file bin/deploy/wordfence-standard.php
+    fi
+
+    # Acorn's own caches (config, events, views) for the new release, when the theme has Acorn: its WP-CLI command exists only then.
+    # The caches are cleared first: a site that keeps Acorn's storage in shared/ (ACORN_STORAGE_PATH) would otherwise hand the new release the config and view caches the
+    # previous release wrote, with that release's paths in them, and the new caches then fail to build ("Unable to locate a class or view for component ..."). Reproduced
+    # with a cache written by another environment; clearing first builds them fresh every time.
+    if wp_run cli has-command acorn >/dev/null 2>&1; then
+        run_wp acorn optimize:clear
+        run_wp acorn optimize
+    fi
+
+    # Warm the page cache: a release starts with an empty one (web/app/cache is per release), so W3 Total Cache's preloader fetches
+    # the first pages of its sitemap now instead of leaving them to the first visitors. Only when W3TC is active AND a preloader
+    # sitemap is set in its settings (bin/deploy/w3tc-settings.php sets one); otherwise nothing runs. Bounded and warn-only.
+    if wp_run plugin is-active w3-total-cache >/dev/null 2>&1; then
+        # Purge the page cache at every release (T-9). web/app/cache is per release, so the new release's own cache starts empty; this makes
+        # that explicit (and clears a cache directory a site has moved to a shared location, and any reverse proxy W3TC is configured for).
+        run_wp w3-total-cache flush posts
+        PRIME_SITEMAP="$(wp_run w3-total-cache option get pgcache.prime.sitemap 2>/dev/null | tr -d '[:space:]')" || PRIME_SITEMAP=""
+        # Uncached pages take about 4 s each on 20i, so the priming has its own, longer bound than the other WP-CLI calls
+        # (30 pages would overrun the 120 s WP_CLI_TIMEOUT; 26 pages took about 80 s in one measured run).
+        case "${CACHE_WARM_LIMIT:-30}:${CACHE_WARM_TIMEOUT:-240}" in
+            *[!0-9:]*|:*|*:) echo "WARN: CACHE_WARM_LIMIT must be a number and CACHE_WARM_TIMEOUT must be a number of seconds, the page cache is not warmed" >&2 ;;
+            *)
+                if [ -n "$PRIME_SITEMAP" ]; then
+                    WP_CLI_TIMEOUT="${CACHE_WARM_TIMEOUT:-240}" run_wp w3-total-cache pgcache_prime --start=1 --limit="${CACHE_WARM_LIMIT:-30}"
+                else
+                    echo "W3 Total Cache has no preloader sitemap set: nothing to warm"
+                fi
+                ;;
+        esac
+    fi
+
+    # Translations for the site language (the WPLANG option), after the flushes, bounded and warn-only like them: install what is
+    # missing and update what is outdated for core, plugins and themes into the shared languages/ directory. Nothing runs for an
+    # English (en_US) or unset site. The option read is bounded too: a hung WP-CLI must not stall the deploy here either.
+    SITE_LANG="$(wp_run option get WPLANG 2>/dev/null | tr -d '[:space:]')" || SITE_LANG=""
+    case "$SITE_LANG" in
+        ""|en_US) ;;
+        *[!A-Za-z0-9_-]*) echo "WARN: ignoring an odd WPLANG value, no language packs installed" >&2 ;;
+        *)
+            run_wp language core install "$SITE_LANG"
+            run_wp language core update
+            run_wp language plugin install --all "$SITE_LANG"
+            run_wp language plugin update --all
+            run_wp language theme install --all "$SITE_LANG"
+            run_wp language theme update --all
+            ;;
+    esac
+else
+    echo "WARN: WP-CLI not found at $WP_CLI -- skipping cache/rewrite flush" >&2
+fi
+
+stage "post steps done"
+empty_trash
+
+# The fresh render check (above) found the web PHP still on the previous release: the release is live and everything else ran, and the run ends red so a person sees it.
+if [ -f "$OPCACHE_STALE_MARKER" ]; then
+    stale_release="$(sed -n 1p "$OPCACHE_STALE_MARKER" 2>/dev/null)"
+    stale_reason="$(sed -n 2p "$OPCACHE_STALE_MARKER" 2>/dev/null)"
+    rm -f "$OPCACHE_STALE_MARKER"
+    case "$stale_reason" in
+        http5??) echo "ERROR: release ${stale_release:-$RELEASE} is activated but the home page answers HTTP ${stale_reason#http} (see BROKEN SITE above). Exiting 3." >&2 ;;
+        *) echo "ERROR: release ${stale_release:-$RELEASE} is activated but the web PHP still renders the PREVIOUS release (see STALE RELEASE above). Exiting 3." >&2 ;;
+    esac
+    exit 3
+fi

@@ -15,8 +15,8 @@ EXCLUDE="':(exclude)LICENSE' ':(exclude)tests/public-safety.test.sh' ':(exclude)
 
 check "no email address outside example and test domains" \
   "git grep -nIEi '[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[a-z]{2,}' -- . $EXCLUDE | grep -viE '@(example\\.(com|org|net|test|invalid)|[a-z0-9-]*\\.test|[a-z0-9-]*\\.invalid|localhost|x\\.test|b\\.com|acme-widgets\\.co\\.uk)([^A-Za-z0-9.-]|\$)' | grep -viE 'users\\.noreply\\.github\\.com|git@github\\.com|actions@github\\.com|\\bnpm@|@(types|wordpress|roots|tailwindcss|vitejs|laravel)/|@[0-9]+\\.[0-9]+'"
-check "no IPv4 address other than loopback" \
-  "git grep -nIE '\\b[0-9]{1,3}\\.[0-9]{1,3}\\.[0-9]{1,3}\\.[0-9]{1,3}\\b' -- . $EXCLUDE | grep -vE '\\b(127\\.0\\.0\\.1|0\\.0\\.0\\.0)\\b' | grep -vE 'version|[0-9]+\\.[0-9]+\\.[0-9]+\\.[0-9]+ *[<=>~^]|[<=>~^] *[0-9]+\\.[0-9]+\\.[0-9]+\\.[0-9]+|@[0-9]|v[0-9]+\\.[0-9]+\\.[0-9]+\\.[0-9]+|20[0-9]{2}\\.[0-9]{2}\\.[0-9]{2}\\.[0-9]+'"
+check "no IPv4 address other than loopback and the documentation ranges (RFC 5737)" \
+  "git grep -nIE '\\b[0-9]{1,3}\\.[0-9]{1,3}\\.[0-9]{1,3}\\.[0-9]{1,3}\\b' -- . $EXCLUDE | grep -vE '\\b(127\\.0\\.0\\.1|0\\.0\\.0\\.0|192\\.0\\.2\\.[0-9]+|198\\.51\\.100\\.[0-9]+|203\\.0\\.113\\.[0-9]+)\\b' | grep -vE 'version|[0-9]+\\.[0-9]+\\.[0-9]+\\.[0-9]+ *[<=>~^]|[<=>~^] *[0-9]+\\.[0-9]+\\.[0-9]+\\.[0-9]+|@[0-9]|v[0-9]+\\.[0-9]+\\.[0-9]+\\.[0-9]+|20[0-9]{2}\\.[0-9]{2}\\.[0-9]{2}\\.[0-9]+'"
 check "no home directory or developer machine path" \
   "git grep -nIE '/Users/[A-Za-z]|/home/[a-z][a-z0-9_-]+/' -- . $EXCLUDE | grep -vE '\\\$T/home|\\\$HOME'"
 check "no private key block" \

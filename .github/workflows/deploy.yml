@@ -1,0 +1,284 @@
+name: Deploy (reusable)
+
+# The PKDE build-and-deploy pipeline as a reusable workflow. A site's own .github/workflows/deploy.yml is a ~30-line caller:
+#
+#   jobs:
+#     deploy:
+#       uses: PyrokineticDarkElf/pkde-platform/.github/workflows/deploy.yml@2026.10.21     # an exact tag, bumped by Renovate
+#       with: { deploy-enabled: "${{ vars.DEPLOY_ENABLED }}" }
+#       secrets: { PROD_SSH_KEY: ..., PROD_SSH_HOST: ..., ... }
+#
+# Triggers, paths-ignore and concurrency stay in the caller (a reusable workflow cannot declare them). This repository's own tools
+# (bin/deploy/*) are checked out at the SAME version as this file: the release script stamps PKDE_PLATFORM_VERSION below with the
+# tag, in the tagged commit, and ci.yml fails a tag push whose stamp differs.
+#
+# Builds entirely on the runner (Composer x2 + npm) and ships the finished build to 20i over rsync/SSH into a new timestamped
+# release directory; 20i is a deploy target here, not a build environment. See bin/deploy/activate-release.sh for the full
+# rationale, what lives in the server's shared/ dir and the one-time server setup this depends on.
+#
+# One job, no Actions artifacts (artifact storage is a monthly quota that blocks uploads once spent, even with nothing stored).
+# Order matters: lint and tests run FIRST against a Composer install that includes the dev tools; only then is Composer re-run
+# with --no-dev to produce the vendor/ that ships, and check-artifact.sh fails if dev packages remain.
+
+on:
+  workflow_call:
+    inputs:
+      build-artifact:
+        description: "Assemble and check the deploy artifact. Off for the starter template, which has no server."
+        type: boolean
+        default: true
+      deploy-enabled:
+        description: "The caller's repository variable DEPLOY_ENABLED ('true' once the server secrets exist)."
+        type: string
+        default: ""
+      deploy-allowed:
+        description: "Set false to never deploy from this repository (the starter template)."
+        type: boolean
+        default: true
+      require-pinned-host-key:
+        description: "Set true to refuse to deploy when the <PROD|STAGING>_SSH_KNOWN_HOSTS secret is missing (no trust on first use). Default false so no site breaks on the bump; set it once the secret exists."
+        type: boolean
+        default: false
+      runs-on:
+        type: string
+        default: ubuntu-26.04
+      php-version:
+        type: string
+        default: "8.3"
+      node-version:
+        type: string
+        default: "24"
+      theme-dir:
+        type: string
+        default: web/app/themes/sage
+    secrets:
+      PROD_SSH_KEY: { required: false }
+      PROD_SSH_HOST: { required: false }
+      PROD_SSH_PORT: { required: false }
+      PROD_SSH_USER: { required: false }
+      PROD_DEPLOY_PATH: { required: false }
+      PROD_SSH_KNOWN_HOSTS: { required: false }
+      STAGING_SSH_KEY: { required: false }
+      STAGING_SSH_HOST: { required: false }
+      STAGING_SSH_PORT: { required: false }
+      STAGING_SSH_USER: { required: false }
+      STAGING_DEPLOY_PATH: { required: false }
+      STAGING_SSH_KNOWN_HOSTS: { required: false }
+
+permissions:
+  contents: read
+
+env:
+  # Stamped with the tag by bin/release.sh (in the tagged commit). 'dev' means an untagged checkout: callers must use a tag.
+  PKDE_PLATFORM_VERSION: dev
+
+jobs:
+  build:
+    runs-on: ${{ inputs.runs-on }}
+    # No secrets here on purpose: job-level env is visible to every step, including `composer install` and `npm ci`
+    # (dependency install scripts), and same-repo pull_request runs (Renovate's branches) get repository secrets. The deploy
+    # secrets are passed only to the deploy steps below.
+    env:
+      BUILD: ${{ inputs.build-artifact }}
+      # Deploy also needs the caller's DEPLOY_ENABLED variable (passed as an input), a push or manual run on main or develop.
+      DEPLOY: ${{ inputs.deploy-allowed && inputs.deploy-enabled == 'true' && github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop') }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7
+        with:
+          persist-credentials: false
+
+      # The tools at the version of this workflow. This repository is public, so the checkout needs no token.
+      - name: Check out the pipeline tools (pkde-platform)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7
+        with:
+          repository: PyrokineticDarkElf/pkde-platform
+          ref: ${{ env.PKDE_PLATFORM_VERSION }}
+          path: .pkde-platform
+          persist-credentials: false
+
+      # The caller must only use paths a site tracks: the site ignores /bin/* and more (see the script). Runs in the caller's checkout.
+      - name: Check the repository layout
+        run: bash .pkde-platform/bin/deploy/check-site-paths.sh .
+
+      # Lint the caller's workflows. Version pinned; the runner label list of actionlint lags behind GitHub's.
+      - name: Lint workflows (actionlint)
+        run: docker run --rm -v "$PWD":/repo -w /repo rhysd/actionlint:1.7.12@sha256:b1934ee5f1c509618f2508e6eb47ee0d3520686341fec936f3b79331f9315667 -color
+
+      - name: Set up PHP
+        uses: shivammathur/setup-php@eb7c497e18156a6bbabfef1d3a82760b9eda3962  # v2
+        with:
+          php-version: ${{ inputs.php-version }}
+          extensions: mysqli, pdo_mysql, gd, zip, intl, exif, opcache, bcmath, soap, imagick
+          tools: composer:v2
+          coverage: none
+
+      # The theme build (npm ci, design-token check, Vite build) runs for the starter too, so a green run means the theme builds
+      # and Renovate's npm/Vite PRs are really built. Only the production Composer install, the artifact assembly/check and the
+      # deploy steps below stay off for the starter (BUILD): they need a server.
+      - name: Set up Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1  # v7
+        with:
+          node-version: ${{ inputs.node-version }}
+          cache: npm
+          cache-dependency-path: ${{ inputs.theme-dir }}/package-lock.json
+
+      # Dev tools included on purpose: Pint and Pest live in require-dev.
+      - name: Install root Composer dependencies (with dev tools)
+        run: composer install --no-interaction --no-progress
+
+      # The root and theme composer.lock (shipped packages only). Fails on a high, critical or unrated advisory; see the script.
+      - name: Audit root Composer dependencies
+        run: bash .pkde-platform/bin/deploy/composer-audit.sh .
+
+      - name: Lint (Pint)
+        run: composer lint
+
+      - name: Test (Pest)
+        run: composer test
+
+      # The repository checks every site shares (layout, repo hygiene, shared paths, FAQ seed) live in this repository, not in a copy in each site: they run against
+      # the caller's repository here. PKDE_SITE_ROOT says which repository that is; the config sits inside the tools checkout, so its paths reach back to the site's vendor/.
+      - name: Shared repository checks
+        env:
+          PKDE_SITE_ROOT: ${{ github.workspace }}
+        run: vendor/bin/pest --configuration .pkde-platform/tests/shared/phpunit.xml
+
+      - name: Install root Composer dependencies (production only)
+        if: env.BUILD == 'true'
+        run: composer install --no-dev --optimize-autoloader --no-interaction --no-progress
+
+      # Always, also for the starter: the token check and the Vite build import from the theme's vendor/ (the Sage kit's generator,
+      # JS and CSS), so they cannot run without it.
+      - name: Install theme Composer dependencies (Acorn, the kit)
+        run: composer install --no-dev --optimize-autoloader --no-interaction --no-progress
+        working-directory: ${{ inputs.theme-dir }}
+
+      - name: Audit theme Composer dependencies (Acorn, the kit)
+        run: bash "$GITHUB_WORKSPACE/.pkde-platform/bin/deploy/composer-audit.sh" .
+        working-directory: ${{ inputs.theme-dir }}
+
+      # --ignore-scripts: a dependency's install script never runs on the runner. The build needs none: esbuild, Rollup and
+      # Tailwind ship their binaries as optional platform packages, not through a postinstall.
+      - name: Install theme npm dependencies
+        run: npm ci --ignore-scripts
+        working-directory: ${{ inputs.theme-dir }}
+
+      # What the theme ships to browsers: its runtime npm dependencies (build tools are devDependencies and never ship). Fails on high or critical.
+      - name: Audit theme npm dependencies (shipped)
+        run: npm audit --omit=dev --audit-level=high
+        working-directory: ${{ inputs.theme-dir }}
+
+      # Build-time tools (Vite and plugins) run on the runner and on developer machines only. A finding is shown as a warning and does not stop a deploy.
+      - name: Audit theme npm build tools (warning only)
+        run: npm audit --audit-level=high || echo "::warning::npm audit found high or critical advisories in the build tools (not shipped); run npm audit fix"
+        working-directory: ${{ inputs.theme-dir }}
+
+      - name: Check generated design tokens are up to date
+        run: npm run theme:check
+        working-directory: ${{ inputs.theme-dir }}
+
+      - name: Build theme assets
+        run: npm run build
+        working-directory: ${{ inputs.theme-dir }}
+
+      - name: Assemble deploy artifact
+        if: env.BUILD == 'true'
+        run: bash .pkde-platform/bin/deploy/assemble-artifact.sh dist
+
+      # Fails the build if the artifact contains something that must never ship (secrets, runtime state, dev-only files, dev
+      # packages) or lacks something the site cannot run without. Runs before anything is sent to a server.
+      - name: Check deploy artifact
+        if: env.BUILD == 'true'
+        run: bash .pkde-platform/bin/deploy/check-artifact.sh dist
+
+      - name: Deploy is switched off
+        if: env.BUILD == 'true' && env.DEPLOY != 'true' && inputs.deploy-enabled != 'true' && github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop')
+        run: echo "::notice::Build and checks passed but nothing was deployed. Set the repository variable DEPLOY_ENABLED to true once the server secrets exist - gh variable set DEPLOY_ENABLED --body true"
+
+      # Everything below runs only on a push (or manual run) to main or develop, never on a pull request. main deploys to
+      # production, develop to staging (PROD_* / STAGING_* secrets). The prefix is picked by a ternary whose both outcomes are
+      # non-empty, so an unset PROD_* secret can never fall through to the staging server.
+      # The tools run with the SSH key below. Composer and npm ran third-party code in this job; if any of it changed the pipeline tools
+      # (the files that ship to the server and run there), stop before the key is loaded.
+      - name: Check the pipeline tools were not modified by the build
+        if: env.DEPLOY == 'true'
+        run: |
+          if [ -n "$(git -C .pkde-platform status --porcelain --untracked-files=all)" ]; then
+            echo "::error::.pkde-platform changed during the build; refusing to load the deploy key"
+            git -C .pkde-platform status --short
+            exit 1
+          fi
+          at="$(git -C .pkde-platform describe --tags --exact-match 2>/dev/null || true)"
+          if [ "$at" != "$PKDE_PLATFORM_VERSION" ]; then
+            echo "::error::.pkde-platform is at '${at:-no tag}', expected $PKDE_PLATFORM_VERSION"
+            exit 1
+          fi
+
+      - name: Load deploy SSH key
+        if: env.DEPLOY == 'true'
+        uses: webfactory/ssh-agent@e83874834305fe9a4a2997156cb26c5de65a8555  # v0.10.0
+        with:
+          ssh-private-key: ${{ secrets[format('{0}_SSH_KEY', github.ref == 'refs/heads/main' && 'PROD' || 'STAGING')] }}
+
+      - name: Deploy to the server
+        if: env.DEPLOY == 'true'
+        env:
+          TOOLS: .pkde-platform
+          SSH_HOST: ${{ secrets[format('{0}_SSH_HOST', github.ref == 'refs/heads/main' && 'PROD' || 'STAGING')] }}
+          SSH_PORT: ${{ secrets[format('{0}_SSH_PORT', github.ref == 'refs/heads/main' && 'PROD' || 'STAGING')] }}
+          SSH_USER: ${{ secrets[format('{0}_SSH_USER', github.ref == 'refs/heads/main' && 'PROD' || 'STAGING')] }}
+          DEPLOY_PATH: ${{ secrets[format('{0}_DEPLOY_PATH', github.ref == 'refs/heads/main' && 'PROD' || 'STAGING')] }}
+          SSH_KNOWN_HOSTS: ${{ secrets[format('{0}_SSH_KNOWN_HOSTS', github.ref == 'refs/heads/main' && 'PROD' || 'STAGING')] }}
+          REQUIRE_PINNED_HOST_KEY: ${{ inputs.require-pinned-host-key }}
+        run: |
+          set -e
+          source "$TOOLS/bin/deploy/retry.sh"
+          release=$(date -u +%Y%m%d%H%M%S)
+          # Keepalives and a connect timeout on ssh and rsync alike: a stalled connection fails in about a
+          # minute instead of hanging. Only the transport is retried (idempotent: mkdir -p, rsync into the same
+          # release directory, rsync of the activation script overwrites). The activation is NOT retried: a half-run activation needs a person.
+          #
+          # One connection for the whole step: 20i's gateway resets under many short connections and refused the scp
+          # that follows the 3-4 minute rsync, so a retry just hit the same refusal. The mkdir ssh below becomes the
+          # master (ControlPersist keeps it alive in the background); rsync and the activation ride on it with no
+          # new handshake. ControlMaster=auto opens a fresh connection if the master has died. The trap closes it.
+          SSH_OPTS=(-o ServerAliveInterval=15 -o ServerAliveCountMax=4 -o ConnectTimeout=20
+            -o ControlMaster=auto -o ControlPath=~/.ssh/cm-%C -o ControlPersist=10m)
+          mkdir -p ~/.ssh
+          trap 'ssh "${SSH_OPTS[@]}" -p "$SSH_PORT" -O exit "$SSH_USER@$SSH_HOST" 2>/dev/null || true' EXIT
+          # The server's host key. Pinned when the caller passes <PROD|STAGING>_SSH_KNOWN_HOSTS (the output of `ssh-keyscan -p PORT HOST`
+          # taken once from a trusted network): the connection then fails if the key differs. Without it the key is learned by
+          # ssh-keyscan on this run (trust on first use, which a network attacker between the runner and the host could answer), and a
+          # warning says so. ssh-keyscan exits 0 even when it timed out and found nothing, so an empty answer counts as a failure.
+          if [ -n "${SSH_KNOWN_HOSTS:-}" ]; then
+            printf '%s\n' "$SSH_KNOWN_HOSTS" >> ~/.ssh/known_hosts
+            SSH_OPTS+=(-o StrictHostKeyChecking=yes)
+          else
+            if [ "${REQUIRE_PINNED_HOST_KEY:-false}" = "true" ]; then
+              echo "::error::No ${GITHUB_REF_NAME} SSH_KNOWN_HOSTS secret and this caller sets require-pinned-host-key: store the output of ssh-keyscan as the secret (bin/deploy/push-gh-secrets.sh does it from the 1Password item)."
+              exit 1
+            fi
+            echo "::warning::No ${GITHUB_REF_NAME} SSH_KNOWN_HOSTS secret: the server's host key is learned by ssh-keyscan on every run (trust on first use). Store its output as the secret to pin it."
+            # shellcheck disable=SC2016
+            retry "ssh-keyscan" bash -c 'keys=$(ssh-keyscan -T 20 -p "$1" -H "$2") && [ -n "$keys" ] && echo "$keys" >> ~/.ssh/known_hosts' _ "$SSH_PORT" "$SSH_HOST"
+          fi
+          retry "Creating the release directory" ssh "${SSH_OPTS[@]}" -p "$SSH_PORT" "$SSH_USER@$SSH_HOST" "mkdir -p $DEPLOY_PATH/releases/$release"
+          retry "rsync of the build" rsync -az --delete -e "ssh ${SSH_OPTS[*]} -p $SSH_PORT" dist/ "$SSH_USER@$SSH_HOST:$DEPLOY_PATH/releases/$release/"
+          # The file goes by rsync over the shell connection, exactly like the build above: no SFTP. scp now speaks SFTP (OpenSSH 9), which needs the
+          # server's SFTP subsystem and resolves the remote path its own way; on 20i it failed with "dest open ...: No such file or directory" while the
+          # mkdir and the rsync to the same folder worked. rsync's remote path is expanded by the same shell as mkdir's.
+          retry "Copying activate-release.sh" rsync -z -e "ssh ${SSH_OPTS[*]} -p $SSH_PORT" "$TOOLS/bin/deploy/activate-release.sh" "$SSH_USER@$SSH_HOST:$DEPLOY_PATH/activate-release.sh"
+          # Two remote execs on the SAME connection (the ControlMaster above): the activation proper, then the post steps (flushes,
+          # acorn optimize, cache warm-up, languages, background clean-up of pruned releases). 20i's gateway seems to close one exec
+          # after about 5 to 6 minutes; each exec stays short, and each one's duration is logged so a drop shows which side it hit.
+          t_activate=$(date +%s)
+          ssh "${SSH_OPTS[@]}" -p "$SSH_PORT" "$SSH_USER@$SSH_HOST" "bash $DEPLOY_PATH/activate-release.sh $DEPLOY_PATH $release 5 activate"
+          echo "Activation exec took $(( $(date +%s) - t_activate ))s"
+          # The release is live after the first exec, so a failure here warns instead of failing the deploy: the post steps can be
+          # re-run by hand (`activate-release.sh <base> <release> 5 post`).
+          t_post=$(date +%s)
+          if ssh "${SSH_OPTS[@]}" -p "$SSH_PORT" "$SSH_USER@$SSH_HOST" "bash $DEPLOY_PATH/activate-release.sh $DEPLOY_PATH $release 5 post"; then
+            echo "Post-steps exec took $(( $(date +%s) - t_post ))s"
+          else
+            echo "::warning::The post-steps exec failed after $(( $(date +%s) - t_post ))s; release $release is live. Re-run: bash $DEPLOY_PATH/activate-release.sh $DEPLOY_PATH $release 5 post"
+          fi

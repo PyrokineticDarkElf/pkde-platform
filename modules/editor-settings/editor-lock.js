@@ -106,7 +106,7 @@
 
 	// the options menu of a selected Section: what would copy, duplicate or restructure it is taken out, and, whatever the markup of the menu turns out to be in this
 	// WordPress version or what a script does to it, a click or Enter on such an item is stopped before the editor sees it (the action wrapper above is not on every path:
-	// the options menu duplicated through a different one on bb.test)
+	// the options menu duplicated through a different one on site.test)
 	const hidden = [ __( 'Duplicate' ), __( 'Copy' ), __( 'Cut' ), __( 'Group' ), __( 'Ungroup' ) ].map( ( text ) => text.trim().toLowerCase() );
 	const selectionHasSection = () => {
 		const store = select( 'core/block-editor' );

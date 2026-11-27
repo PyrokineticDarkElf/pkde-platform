@@ -1,5 +1,7 @@
 # Always-on mu-plugins
 
+> **Merged modules.** `mail`, `user-privacy`, `schema` and `cf7` each hold what used to be separate modules, now in `modules/<module>/<part>.php`. A part keeps its old name and `PKDE_PLATFORM_DISABLE` still accepts it (it switches off just that part); the module's own name switches off all of it. `cf7-test-copy` was removed. The headings below keep the old names as part names.
+
 Single-file mu-plugins (loaded automatically by WordPress, no activation needed) for small,
 site-wide behaviour that shouldn't depend on a plugin staying active. For the larger, multi-file
 mu-plugin in this same directory, see [`private-usernames/README.md`](private-usernames/README.md).
@@ -175,7 +177,7 @@ Behaviours that work on data, uploads, integrations and structured data, not on 
 | `woocommerce-import-slug` | `PKDE_PLATFORM_WOOCOMMERCE_IMPORT_SLUG` | WooCommerce's CSV importer offers a "Slug" field and maps a "Slug" column to it, so an import keeps its product URLs. |
 | `product-schema` | `PKDE_PLATFORM_PRODUCT_SCHEMA` | Corrects Rank Math's Product JSON-LD: the displayed price (including or excluding tax), the brand (`product_brand`, or `pkde_kit/product_brand`), `shippingDetails` from the store's shipping zone (`pkde_kit/schema_shipping_details`) and an optional return policy (`pkde_kit/schema_return_policy`). WooCommerce and Rank Math. |
 | `relevanssi-woocommerce` | `PKDE_PLATFORM_RELEVANSSI_WOOCOMMERCE` | With Relevanssi answering a product search, the shop's sort choices (price, popularity, rating) and "date" are handed to it as the fields they sort by. |
-| `shortcodes` | `PKDE_PLATFORM_SHORTCODES` | `[years_since year="2014" suffix="+"]`: the years since a year, computed on every render. A theme that still registers the tag (bp and rp until their site move) registers after this and wins, with the same output. |
+| `shortcodes` | `PKDE_PLATFORM_SHORTCODES` | `[years_since year="2014" suffix="+"]`: the years since a year, computed on every render. A theme that still registers the tag registers after this and wins, with the same output. |
 | `cf7-form-key` | `PKDE_PLATFORM_CF7_FORM_KEY` | A Contact Form 7 form found by the post meta `_pkde_form_key` (`contact` by default): `cf7_form_id()` and `cf7_form_shortcode()`. The kit's `App\form_id()` and `App\form_shortcode()` call them. |
 | `cf7-editor-preview` | `PKDE_PLATFORM_CF7_EDITOR_PREVIEW` | The REST route `pkde/v1/form-preview` the block editor asks to show a real Contact Form 7 form instead of its shortcode (inert: no scripts, no submit). The editor script stays in the kit. |
 | `faq` (schema API) | `PKDE_PLATFORM_FAQ_SCHEMA` | One FAQPage JSON-LD per page from every FAQ block, de-duplicated by question (`faq_page_entities()`, `faq_schema_json()`, `faq_schema_add()`); skipped when `pkde_kit/faq_schema` returns false or Rank Math's FAQ block is on the page. |

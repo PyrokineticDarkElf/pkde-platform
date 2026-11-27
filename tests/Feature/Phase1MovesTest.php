@@ -4,8 +4,15 @@
 // proved on a real WordPress. WordPress is stood in for by two global functions where a module asks for it.
 $modules = dirname(__DIR__, 2) . '/modules';
 
+// a module's file, or a part of a merged module (modules/<module>/<part>.php)
+$moduleFile = fn(string $name) => match ($name) {
+    'cf7-form-key', 'cf7-editor-preview' => "$modules/cf7/$name.php",
+    'product-schema' => "$modules/schema/$name.php",
+    default => "$modules/$name.php",
+};
+
 foreach (['media', 'disable-emoji', 'woocommerce-import-slug', 'relevanssi-woocommerce', 'shortcodes', 'cf7-form-key', 'cf7-editor-preview', 'product-schema'] as $name) {
-    require_once "$modules/$name.php";
+    require_once $moduleFile($name);
 }
 
 use function App\MuPlugins\cf7_form_id;
@@ -35,11 +42,11 @@ if (! function_exists('shortcode_exists')) {
     }
 }
 
-it('defines the constant the kit looks for in each module, and only there', function () use ($modules) {
+it('defines the constant the kit looks for in each module, and only there', function () use ($modules, $moduleFile) {
     foreach (['media' => 'PKDE_PLATFORM_MEDIA', 'disable-emoji' => 'PKDE_PLATFORM_DISABLE_EMOJI', 'woocommerce-import-slug' => 'PKDE_PLATFORM_WOOCOMMERCE_IMPORT_SLUG', 'relevanssi-woocommerce' => 'PKDE_PLATFORM_RELEVANSSI_WOOCOMMERCE',
         'shortcodes' => 'PKDE_PLATFORM_SHORTCODES', 'cf7-form-key' => 'PKDE_PLATFORM_CF7_FORM_KEY', 'cf7-editor-preview' => 'PKDE_PLATFORM_CF7_EDITOR_PREVIEW', 'product-schema' => 'PKDE_PLATFORM_PRODUCT_SCHEMA'] as $name => $constant) {
         expect(defined($constant))->toBeTrue("$name defines $constant");
-        expect(file_get_contents("$modules/$name.php"))->toContain("define('$constant', true);");
+        expect(file_get_contents($moduleFile($name)))->toContain("define('$constant', true);");
     }
 
     expect(file_get_contents("$modules/faq/faq.php"))->toContain("define('PKDE_PLATFORM_FAQ_SCHEMA', true);")
