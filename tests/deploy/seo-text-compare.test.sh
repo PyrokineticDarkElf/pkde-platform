@@ -9,7 +9,7 @@ command -v python3 >/dev/null 2>&1 || { echo "SKIP: python3 is not installed"; e
 pass=0; fail=0
 check() { if eval "$2"; then pass=$((pass + 1)); echo "  PASS  $1"; else fail=$((fail + 1)); echo "  FAIL  $1"; fi; }
 
-py() { PYTHONPATH="$REPO_ROOT/bin/deploy/seo" python3 -c "from text_compare import *; $1"; }
+py() { PYTHONPATH="$REPO_ROOT/bin/migrate/seo" python3 -c "from text_compare import *; $1"; }
 
 check "the same text in different markup, case and punctuation is identical" \
   "py \"a, b = difference('<main><h1>Hello World!</h1><p>Call £20 now</p></main>', '<main><div><span>hello</span> <b>WORLD</b></div><p>call £20 now.</p></main>'); assert not a and not b, (a, b)\""

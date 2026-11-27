@@ -1,9 +1,9 @@
-"""Tests for bin/deploy/native (the page conversion tools). Pure functions only: nothing here needs Docker or a database.
+"""Tests for bin/migrate/native (the page conversion tools). Pure functions only: nothing here needs Docker or a database.
 Run: python3 -m unittest discover -s tests/native -v"""
 import re, sys, unittest
 from pathlib import Path
 
-NATIVE = Path(__file__).resolve().parents[2] / 'bin/deploy/native'
+NATIVE = Path(__file__).resolve().parents[2] / 'bin/migrate/native'
 sys.argv = [sys.argv[0], '--prefix', 'zz']  # the class prefix nativize reads at import
 sys.path.insert(0, str(NATIVE))
 

@@ -53,7 +53,7 @@ export PERF_PROBE_PHP=php
 
 pass=0; fail=0
 check() { if eval "$2"; then pass=$((pass + 1)); echo "  PASS  $1"; else fail=$((fail + 1)); echo "  FAIL  $1"; fi; }
-run() { (cd "$ROOT" && bash bin/diagnostics/perf-probe.sh "$@"); }
+run() { (cd "$ROOT" && bash bin/deploy/perf-probe.sh "$@"); }
 
 echo "=== a normal run ==="
 : > "$T/curl.args"; rm -f "$T/stub.errors"
@@ -96,7 +96,7 @@ check "an ordinary run has no gate warning" "! grep -q 'coming-soon gate' '$T/ou
 
 echo "=== a signal in the middle of a request ==="
 touch "$T/stub-sleep"
-(cd "$ROOT" && exec bash bin/diagnostics/perf-probe.sh https://staging.example.test/ > "$T/out7.log" 2>&1) &
+(cd "$ROOT" && exec bash bin/deploy/perf-probe.sh https://staging.example.test/ > "$T/out7.log" 2>&1) &
 pid=$!
 for _ in $(seq 1 50); do [ -e "$PROBE" ] && break; sleep 0.1; done
 check "the probe is installed while the run is in progress" "[ -e '$PROBE' ]"

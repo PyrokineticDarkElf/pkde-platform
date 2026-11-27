@@ -14,7 +14,7 @@ check() { if [ "$2" = "$3" ]; then pass=$((pass + 1)); else fail=$((fail + 1)); 
 # The smallest tree both scripts accept.
 site="$T/site"
 mkdir -p "$site/web/app/plugins/wordfence/lib" "$site/web/app/plugins/w3-total-cache/pub" "$site/web/app/plugins/w3-total-cache/ini" \
-         "$site/web/app/mu-plugins/pkde-platform/modules/user-privacy/private-usernames" "$site/web/app/mu-plugins/bedrock-disallow-indexing" \
+         "$site/web/app/mu-plugins/pkde-platform/modules/user-privacy/private-usernames" "$site/web/app/mu-plugins/pkde-platform/modules/mail" "$site/web/app/mu-plugins/bedrock-disallow-indexing" \
          "$site/web/app/themes/sage/public/build" "$site/web/app/themes/sage/vendor/pkde/sage-kit/src" "$site/web/wp" "$site/vendor" "$site/config" "$site/bin"
 for f in web/.htaccess.dist web/index.php web/wp-config.php web/wp/wp-load.php vendor/autoload.php config/application.php config/shared-paths.php \
          composer.json composer.lock wp-cli.yml web/app/themes/sage/public/build/manifest.json web/app/themes/sage/vendor/autoload.php \
