@@ -136,6 +136,13 @@ jobs:
       - name: Test (Pest)
         run: composer test
 
+      # The repository checks every site shares (layout, repo hygiene, shared paths, FAQ seed) live in this repository, not in a copy in each site: they run against
+      # the caller's repository here. PKDE_SITE_ROOT says which repository that is; the config sits inside the tools checkout, so its paths reach back to the site's vendor/.
+      - name: Shared repository checks
+        env:
+          PKDE_SITE_ROOT: ${{ github.workspace }}
+        run: vendor/bin/pest --configuration .pkde-platform/tests/shared/phpunit.xml
+
       - name: Install root Composer dependencies (production only)
         if: env.BUILD == 'true'
         run: composer install --no-dev --optimize-autoloader --no-interaction --no-progress

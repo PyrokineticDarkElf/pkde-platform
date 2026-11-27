@@ -8,6 +8,7 @@
     <testsuites>
         <testsuite name="Test Suite">
             <directory suffix="Test.php">./tests</directory>
+            <exclude>./tests/shared</exclude>
         </testsuite>
     </testsuites>
 </phpunit>
