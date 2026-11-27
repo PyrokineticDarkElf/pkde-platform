@@ -29,6 +29,11 @@ site). Bedrock's autoloader includes `pkde-platform.php`, which requires every m
 Switch one off on a site: `PKDE_PLATFORM_DISABLE=google-tag-manager,safe-svg` (environment variable or a constant in
 `config/application.php`). A module made of parts goes off whole by its own name (`mail`), and one part at a time by the name the part had as a module (`post-smtp-env`): the old names keep working.
 
+## The deploy pipeline
+
+The reusable deploy workflow (`.github/workflows/deploy.yml`) and the deploy tools (`bin/deploy/`) live in this repository, under the same tag as the modules (they were pkde-deploy). A site's caller is
+`uses: PyrokineticDarkElf/pkde-platform/.github/workflows/deploy.yml@<tag>`. See `docs/deploy.md`.
+
 ## Security
 
 Report vulnerabilities privately (see `SECURITY.md`). Nothing here is secret and nothing relies on the code being secret. One point worth
@@ -49,4 +54,4 @@ GPL-2.0-or-later (see `LICENSE`), the same as WordPress.
 * Working on it from a site: in the site, `composer config repositories.pkde-platform path ../pkde-platform` and require `dev-main`
   (mount the directory into the container; a symlink to a directory outside the mount does not resolve). Never commit that change.
 * Release: add a `## YYYY.MM.DD` section to `CHANGELOG.md`, push, wait for CI, then `bin/release.sh YYYY.MM.DD`. That script is the only
-  way a tag is made (no branch protection on the free plan). Roll a site back by pinning the previous tag.
+  way a tag is made (no branch protection on the free plan): it stamps the version into the deploy workflows, waits for CI on that commit and tags it. Roll a site back by pinning the previous tag.

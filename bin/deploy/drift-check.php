@@ -1,0 +1,1304 @@
+<?php
+
+/**
+ * Drift check: compares a site's server-side settings with the template standard. READ ONLY and secret-free.
+ *
+ * Run it on the server in ONE SSH session (it must start with <?php: `wp eval-file` prints a file without the tag as
+ * plain text and `wp eval-file -` / stdin does not work over SSH on 20i). From the site's release directory:
+ *
+ *   bash bin/deploy/wp.sh eval-file bin/deploy/drift-check.php
+ *
+ * or locally: docker compose run --rm wpcli wp --allow-root eval-file bin/deploy/drift-check.php
+ *
+ * Prints one PASS / FAIL / SKIP / WARN line per check and exits 1 when anything FAILs. It never writes (no update_option,
+ * no wfConfig::set), and it never prints secrets: Turnstile keys are reported only as present or missing. SKIP marks checks
+ * that only apply outside development (keys, login slug, Post SMTP, the W3TC standard). Standards: the Wordfence alert settings, Turnstile, the fixed CF7 mail subject and
+ * the deployment guide's "Server-settings drift check" section.
+ *
+ * Loaded without WordPress (the Pest test) it only defines the pure functions below.
+ */
+
+require_once __DIR__ . '/w3tc-standard.php';
+require_once __DIR__ . '/alert-email.php';
+require_once __DIR__ . '/rankmath-standard.php';
+require_once __DIR__ . '/cf7-form-key-standard.php';
+
+const PKDE_DRIFT_SUBJECT = 'New website enquiry - [_site_title] - [your-name]';
+
+/** Does a CF7 mail's Additional headers Cc the site admin through the special tag (no address stored in the form)? */
+function pkde_drift_cc_admin_ok(string $headers): bool
+{
+    return preg_match('/^\s*Cc:[^\r\n]*\[_site_admin_email\]/mi', $headers) === 1;
+}
+
+/** Is a CF7 form name descriptive (not CF7's own "Contact form 1" or "Untitled")? */
+function pkde_drift_form_name_ok(string $title): bool
+{
+    $title = trim($title);
+
+    return $title !== '' && preg_match('/^(contact form \d+|untitled)$/i', $title) !== 1;
+}
+
+/**
+ * Is a CF7 mail subject the fixed standard? Fixed prefix "New website enquiry - ", then [_site_title] or the literal site name,
+ * then " - [your-name]", then optionally one more " - [mail-tag]" (a form that also names the page or listing it came from).
+ * A visitor-controlled [your-subject], or a different prefix, never passes.
+ */
+function pkde_drift_subject_ok(string $subject, string $siteTitle = ''): bool
+{
+    $titles = ['\[_site_title\]'];
+    foreach (array_unique([trim($siteTitle), trim(html_entity_decode($siteTitle))]) as $name) {
+        if ($name !== '') {
+            $titles[] = preg_quote($name, '/');
+        }
+    }
+
+    return preg_match('/^New website enquiry - (?:' . implode('|', $titles) . ') - \[your-name\](?: - \[[A-Za-z0-9_-]+\])?$/', trim($subject)) === 1;
+}
+
+/** The Wordfence values bin/setup seeds; alertEmails is checked separately (must include admin_email). */
+function pkde_drift_wordfence_standard(): array
+{
+    return [
+        'alertOn_update' => '0', 'alertOn_severityLevel' => '75', 'alertOn_block' => '0', 'alertOn_loginLockout' => '0',
+        'alertOn_lostPasswdForm' => '0', 'alertOn_breachLogin' => '1', 'alertOn_adminLogin' => '1',
+        'alertOn_firstAdminLoginOnly' => '1', 'alertOn_wordfenceDeactivated' => '1', 'alertOn_wafDeactivated' => '1',
+        'alertOn_scanIssues' => '1', 'scansEnabled_plugins' => '1', 'scansEnabled_themes' => '1',
+        'alert_maxHourly' => '3', 'email_summary_enabled' => '1', 'email_summary_interval' => 'weekly',
+        // Prevent discovery of usernames through ?author=N and the REST users list (Wordfence's default, now part of the standard and set by every release)
+        'loginSec_disableAuthorScan' => '1',
+    ];
+}
+
+/** Plugins every site is expected to have active (slug = plugin directory). */
+function pkde_drift_core_plugins(): array
+{
+    return ['wordfence', 'ewww-image-optimizer', 'w3-total-cache', 'speculation-rules'];
+}
+
+/** The SEO plugins a site may use: exactly one of these is expected (Rank Math is the template's default; Yoast, free or premium, is accepted). */
+function pkde_drift_seo_plugins(): array
+{
+    return ['seo-by-rank-math', 'wordpress-seo', 'wordpress-seo-premium'];
+}
+
+function pkde_drift_is_placeholder_email(string $email): bool
+{
+    $email = strtolower(trim($email));
+
+    return $email === '' || preg_match('/@(example\.(com|org|net)|localhost|.*\.test|.*\.local)$/', $email) === 1;
+}
+
+/**
+ * Theme view files that read per-visitor data on the server (the basket, a pending notice, a cookie, the user): each one is a leak when the page
+ * cache serves visitors with a basket. Read only; the kit's own views live in the package, not here. Returns paths relative to $dir.
+ *
+ * @return list<string>
+ */
+function pkde_drift_personal_views(string $dir): array
+{
+    if (! is_dir($dir)) {
+        return [];
+    }
+
+    $pattern = '/WC\(\)->(?:cart|session|customer)|get_cart_contents_count|wc_print_notices|wc_get_notices|wp_get_current_user|get_current_user_id|\$_COOKIE|wp_get_current_commenter|comment_form\(/';
+    $found = [];
+    foreach (new RecursiveIteratorIterator(new RecursiveDirectoryIterator($dir, FilesystemIterator::SKIP_DOTS)) as $file) {
+        if ($file->isFile() && str_ends_with($file->getFilename(), '.php') && preg_match($pattern, (string) file_get_contents($file->getPathname()))) {
+            $found[] = ltrim(substr($file->getPathname(), strlen($dir)), '/');
+        }
+    }
+    sort($found);
+
+    return $found;
+}
+
+/**
+ * How many lines of two texts are not in the other (a set difference both ways, so a moved line costs nothing and an added or changed one counts). Pure.
+ */
+function pkde_drift_line_diff(string $a, string $b): int
+{
+    $lines = fn(string $text) => array_values(array_filter(array_map('trim', explode("\n", $text)), fn($l) => $l !== ''));
+    $left = $lines($a);
+    $right = $lines($b);
+
+    return count(array_diff($left, $right)) + count(array_diff($right, $left));
+}
+
+/**
+ * The theme's overrides of kit views (resources/views/vendor/pkde-kit/**) against the kit's current view of the same path: how many lines differ, and whether
+ * the override is identical to the kit's (then it can be deleted). A copy of a view falls behind the kit without any test failing (bb's category tiles lost the "Shop all"
+ * tile, tcs's product card lost the rating position); this makes it visible. Read only. Returns path => lines that differ (0 = identical), or null when there is no kit.
+ *
+ * @return array<string, int>|null
+ */
+function pkde_drift_kit_overrides(string $themeDir): ?array
+{
+    $overrides = $themeDir . '/resources/views/vendor/pkde-kit';
+    $kit = $themeDir . '/vendor/pkde/sage-kit/resources/views';
+    if (! is_dir($overrides) || ! is_dir($kit)) {
+        return is_dir($overrides) ? null : [];
+    }
+
+    $found = [];
+    foreach (new RecursiveIteratorIterator(new RecursiveDirectoryIterator($overrides, FilesystemIterator::SKIP_DOTS)) as $file) {
+        if (! $file->isFile() || ! str_ends_with($file->getFilename(), '.blade.php')) {
+            continue;
+        }
+        $relative = ltrim(substr($file->getPathname(), strlen($overrides)), '/');
+        $original = $kit . '/' . $relative;
+        $found[$relative] = is_file($original) ? pkde_drift_line_diff((string) file_get_contents($file->getPathname()), (string) file_get_contents($original)) : -1; // -1: the kit has no such view
+    }
+    ksort($found);
+
+    return $found;
+}
+
+/**
+ * The Contact Form 7 lookup keys the theme asks for (App\form_id('x'), App\form_shortcode('x')) and the files that still find a form by its title.
+ * Read only; scans the theme's PHP and Blade files in the given directories. Returns ['keys' => list<string>, 'by_title' => list<string> relative paths].
+ *
+ * @return array{keys: list<string>, by_title: list<string>}
+ */
+function pkde_drift_cf7_key_usage(array $dirs): array
+{
+    $keys = [];
+    $byTitle = [];
+    foreach ($dirs as $dir) {
+        if (! is_dir($dir)) {
+            continue;
+        }
+        foreach (new RecursiveIteratorIterator(new RecursiveDirectoryIterator($dir, FilesystemIterator::SKIP_DOTS)) as $file) {
+            if (! $file->isFile() || ! str_ends_with($file->getFilename(), '.php')) {
+                continue;
+            }
+            $scan = pkde_cf7_key_scan((string) file_get_contents($file->getPathname()));
+            $keys = array_merge($keys, $scan['keys']);
+            if ($scan['by_title']) {
+                $byTitle[] = basename($dir) . '/' . ltrim(substr($file->getPathname(), strlen($dir)), '/');
+            }
+        }
+    }
+    sort($byTitle);
+
+    return ['keys' => array_values(array_unique($keys)), 'by_title' => $byTitle];
+}
+
+/**
+ * What the breadcrumb standard looks like on this site: whether the kit's standard is present, the separator and the home label Rank Math would
+ * actually get (the kit's filters applied), and whether Rank Math's breadcrumb module is on. Read only.
+ *
+ * @return array<string, mixed>
+ */
+function pkde_drift_breadcrumb_facts(): array
+{
+    $settings = (array) apply_filters('rank_math/frontend/breadcrumb/settings', []);
+    $strings = (array) apply_filters('rank_math/frontend/breadcrumb/strings', []);
+    $rankMath = class_exists('RankMath\\Helper');
+
+    return [
+        'kit' => function_exists('App\\breadcrumb_standard'),
+        'separator' => (string) ($settings['separator'] ?? ''),
+        'home' => (string) ($strings['home'] ?? ''),
+        'rank_math' => $rankMath,
+        'module_on' => $rankMath && \RankMath\Helper::is_breadcrumbs_enabled(),
+    ];
+}
+
+/**
+ * What the platform's editor-settings module does for someone who is not an Administrator, asked of the real filters. A WP-CLI run has no
+ * user, which is exactly the "not an Administrator" case. Null when the module is not loaded (an older platform release, or switched off).
+ *
+ * @return array{can_lock: bool, custom_colors: bool, remote_patterns: bool, blocks_limited: bool, shortcode: bool}|null
+ */
+function pkde_drift_editor_settings_facts(): ?array
+{
+    if (! function_exists('App\\MuPlugins\\editor_settings_state')) {
+        return null;
+    }
+
+    $settings = (array) apply_filters('block_editor_settings_all', ['canLockBlocks' => true, '__experimentalFeatures' => ['color' => ['custom' => true]]], null);
+    $allowed = apply_filters('allowed_block_types_all', true, (object) ['name' => 'core/edit-post']);
+
+    return [
+        'can_lock' => ! empty($settings['canLockBlocks']),
+        'custom_colors' => ! empty($settings['__experimentalFeatures']['color']['custom']),
+        'remote_patterns' => (bool) apply_filters('should_load_remote_block_patterns', true),
+        'blocks_limited' => is_array($allowed),
+        'shortcode' => is_array($allowed) && in_array('core/shortcode', $allowed, true),
+    ];
+}
+
+/**
+ * The block editor's bundled patterns and Rank Math's blocks: how many WordPress or WooCommerce patterns are still registered, and whether every registered
+ * Rank Math block is hidden from the inserter. Null for each part that does not apply (no platform module, no Rank Math blocks).
+ *
+ * @return array{bundled_patterns: ?int, rank_math_visible: ?list<string>}
+ */
+function pkde_drift_editor_catalog_facts(): array
+{
+    $facts = ['bundled_patterns' => null, 'rank_math_visible' => null];
+
+    if (! function_exists('App\\MuPlugins\\editor_settings_state') || ! class_exists('WP_Block_Patterns_Registry')) {
+        return $facts;
+    }
+
+    $names = array_column(\WP_Block_Patterns_Registry::get_instance()->get_all_registered(), 'name');
+    $facts['bundled_patterns'] = count(App\MuPlugins\editor_patterns_to_remove($names));
+
+    $types = class_exists('WP_Block_Type_Registry') ? array_filter(\WP_Block_Type_Registry::get_instance()->get_all_registered(), fn($type, $name) => str_starts_with((string) $name, 'rank-math/'), ARRAY_FILTER_USE_BOTH) : [];
+
+    if ($types) {
+        $facts['rank_math_visible'] = array_values(array_keys(array_filter($types, fn($type) => ($type->supports['inserter'] ?? true) !== false)));
+    }
+
+    return $facts;
+}
+
+/**
+ * The global blocks (tier 3) a site uses and what it declares for them: a block printed on published pages with nothing declared prints nothing.
+ *
+ * @return array<string, array{pages: int, declared: bool}> block name => pages using it, and whether config/pkde-sections.php has its text
+ */
+function pkde_drift_global_blocks_facts(): array
+{
+    global $wpdb;
+
+    if (! function_exists('App\\section_declaration') || ! isset($wpdb)) {
+        return [];
+    }
+
+    $facts = [];
+
+    foreach (['cta-band' => 'text'] as $name => $required) {
+        $pages = (int) $wpdb->get_var($wpdb->prepare("SELECT COUNT(*) FROM {$wpdb->posts} WHERE post_status = 'publish' AND post_content LIKE %s", '%wp:sage/' . $wpdb->esc_like($name) . '%'));
+        $facts[$name] = ['pages' => $pages, 'declared' => trim((string) (App\section_declaration($name)[$required] ?? '')) !== ''];
+    }
+
+    return $facts;
+}
+
+/**
+ * Site details (platform module site-details): the declared type, what the type still needs, the stored values that differ from the declaration, and the values typed
+ * separately in Rank Math that differ from Site details (read from the database, not through the module's feed). Null when the module is not loaded.
+ */
+function pkde_drift_site_details_facts(): ?array
+{
+    global $wpdb;
+
+    if (! function_exists('App\\MuPlugins\\site_details') || ! isset($wpdb)) {
+        return null;
+    }
+
+    $d = App\MuPlugins\site_details();
+    $declaration = App\MuPlugins\site_details_declaration();
+    $stored = (array) get_option(App\MuPlugins\SITE_DETAILS_OPTION, []);
+    $differs = [];
+
+    foreach (array_keys(App\MuPlugins\SITE_DETAILS_BUSINESS) as $key) {
+        $declared = (string) ($declaration['values']['business'][$key] ?? '');
+        $kept = (string) ($stored['business'][$key] ?? '');
+
+        if ($declared !== '' && $kept !== '' && $kept !== $declared) {
+            $differs[] = "business.$key";
+        }
+    }
+
+    foreach (['phones' => 'number', 'emails' => 'address'] as $group => $field) {
+        $declared = (string) ($declaration['values'][$group][0][$field] ?? '');
+        $kept = (string) ($stored[$group][0][$field] ?? '');
+
+        if ($declared !== '' && $kept !== '' && $kept !== $declared) {
+            $differs[] = "$group.0.$field";
+        }
+    }
+
+    $raw = maybe_unserialize((string) $wpdb->get_var("SELECT option_value FROM {$wpdb->options} WHERE option_name = 'rank-math-options-titles'"));
+    $raw = is_array($raw) ? $raw : [];
+    $rank = [];
+    $pairs = ['name' => [(string) ($raw['knowledgegraph_name'] ?? ''), (string) ($d['business']['trading_name'] ?? '')], 'phone' => [(string) ($raw['phone'] ?? ''), (string) ($d['phones'][0]['number'] ?? '')],
+        'email' => [(string) ($raw['email'] ?? ''), (string) ($d['emails'][0]['address'] ?? '')]];
+
+    foreach ($pairs as $label => [$typed, $site]) {
+        if ($typed !== '' && $site !== '' && $typed !== $site) {
+            $rank[] = $label;
+        }
+    }
+
+    return [
+        'type' => (string) $declaration['type'],
+        'missing' => App\MuPlugins\site_details_required($d, (string) $declaration['type']),
+        'differs' => $differs,
+        'rank_math' => $rank,
+        'locked' => count($declaration['locked']),
+        // the groups the kit reads from the old client_* options because Site details holds nothing for them; [] for a kit without the fallback
+        'legacy' => function_exists('App\\site_details_legacy_fallbacks') ? \App\site_details_legacy_fallbacks() : [],
+    ];
+}
+
+/**
+ * The legal documents (platform module legal): what is published by type, the two settings that may point at a document, the documents with no effective date,
+ * and any address a Page and a document share. Null when the post type is not registered (an older platform, or the module is switched off).
+ */
+function pkde_drift_legal_facts(): ?array
+{
+    global $wpdb;
+
+    if (! function_exists('post_type_exists') || ! post_type_exists('pkde_legal') || ! isset($wpdb)) {
+        return null;
+    }
+
+    $docs = get_posts(['post_type' => 'pkde_legal', 'post_status' => 'publish', 'numberposts' => -1, 'suppress_filters' => true]);
+    $types = [];
+    $noDate = [];
+
+    foreach ($docs as $doc) {
+        $types[(string) get_post_meta($doc->ID, '_pkde_legal_type', true) ?: 'other'][] = $doc->post_name;
+
+        if ((string) get_post_meta($doc->ID, '_pkde_legal_effective', true) === '') {
+            $noDate[] = $doc->post_name;
+        }
+    }
+
+    $points = function (string $option): ?string {
+        $id = (int) get_option($option);
+
+        if ($id === 0) {
+            return 'unset';
+        }
+
+        $post = get_post($id);
+
+        return $post && $post->post_type === 'pkde_legal' && $post->post_status === 'publish' ? 'document' : 'other';
+    };
+    $clashes = $wpdb->get_col("SELECT d.post_name FROM {$wpdb->posts} d JOIN {$wpdb->posts} p ON p.post_name = d.post_name AND p.post_type = 'page' AND p.post_status = 'publish' WHERE d.post_type = 'pkde_legal' AND d.post_status = 'publish'");
+
+    return [
+        'types' => array_map('count', $types),
+        'no_date' => $noDate,
+        'privacy_setting' => $points('wp_page_for_privacy_policy'),
+        'terms_setting' => $points('woocommerce_terms_page_id'),
+        'clashes' => array_values(array_unique($clashes)),
+    ];
+}
+
+/**
+ * The FAQs post type (platform module faq): that it has no public URL, archive or sitemap entry, who may manage it, the FAQ blocks still typed by hand, and the
+ * groups with no FAQ. Null when the post type is not registered (an older platform, or the module is switched off).
+ *
+ * @return array<string, mixed>|null
+ */
+/** The declared buttons (resources/generated/buttons.php), false when the site declares none, null for a kit older than the button system. */
+function pkde_drift_buttons_facts(string $themeDir): array|false|null
+{
+    if (! is_file($themeDir . '/resources/generated/shape.php')) {
+        return null; // no shape file either: a kit older than
+    }
+
+    $file = $themeDir . '/resources/generated/buttons.php';
+
+    if (! is_file($file)) {
+        return false;
+    }
+
+    $buttons = include $file;
+
+    return is_array($buttons) ? $buttons : false;
+}
+
+/** The shape tokens the theme was generated with (resources/generated/shape.php of the kit), or null without that file. */
+function pkde_drift_shape_facts(string $themeDir): ?array
+{
+    $file = $themeDir . '/resources/generated/shape.php';
+
+    if (! is_file($file)) {
+        return null;
+    }
+
+    $shape = include $file;
+
+    return is_array($shape) ? $shape : null;
+}
+
+function pkde_drift_faq_facts(): ?array
+{
+    global $wpdb;
+
+    if (! function_exists('post_type_exists') || ! post_type_exists('pkde_faq')) {
+        return null;
+    }
+
+    $type = get_post_type_object('pkde_faq');
+    $inSitemap = false;
+
+    if (function_exists('wp_sitemaps_get_server')) {
+        $provider = wp_sitemaps_get_server()->registry->get_provider('posts');
+        $inSitemap = $provider && in_array('pkde_faq', array_keys((array) $provider->get_object_subtypes()), true);
+    }
+
+    $hasCap = fn(string $role) => ($r = get_role($role)) ? $r->has_cap('manage_pkde_faqs') : false;
+
+    // FAQ blocks still typed by hand: a kit FAQ block with no group, on a page
+    $typed = [];
+    $ids = isset($wpdb) ? $wpdb->get_col("SELECT ID FROM {$wpdb->posts} WHERE post_status IN ('publish','draft','pending','private','future') AND post_type NOT IN ('revision','pkde_faq') AND post_content LIKE '%wp:sage/faq%' ORDER BY ID ASC LIMIT 200") : [];
+    $walk = function (array $blocks) use (&$walk): int {
+        $n = 0;
+        foreach ($blocks as $block) {
+            $n += (($block['blockName'] ?? '') === 'sage/faq' && empty($block['attrs']['groups'])) ? 1 : 0;
+            $n += $walk((array) ($block['innerBlocks'] ?? []));
+        }
+
+        return $n;
+    };
+    foreach ($ids as $id) {
+        $post = get_post((int) $id);
+        $count = $post ? $walk(parse_blocks($post->post_content)) : 0;
+        if ($count > 0) {
+            $typed[$post->post_name ?: (string) $id] = $count;
+        }
+    }
+
+    $terms = taxonomy_exists('pkde_faq_group') ? get_terms(['taxonomy' => 'pkde_faq_group', 'hide_empty' => false]) : [];
+
+    return [
+        'public' => (bool) $type->public || (bool) $type->publicly_queryable,
+        'rewrite' => (bool) $type->rewrite,
+        'has_archive' => (bool) $type->has_archive,
+        'in_sitemap' => $inSitemap,
+        'admin_cap' => $hasCap('administrator'),
+        'editor_cap' => $hasCap('editor'),
+        'seo_role' => (bool) get_role('pkde_seo'),
+        'seo_cap' => $hasCap('pkde_seo'),
+        'typed_blocks' => $typed,
+        'empty_groups' => is_wp_error($terms) ? [] : array_values(array_map(fn($t) => $t->slug, array_filter($terms, fn($t) => (int) $t->count === 0))),
+    ];
+}
+
+/**
+ * Pure comparison of collected facts with the standard.
+ *
+ * @param  array<string,mixed>  $f  facts from pkde_drift_collect()
+ * @return list<array{0:string,1:string,2:string}> [status, check, detail]
+ */
+function pkde_drift_evaluate(array $f): array
+{
+    $dev = in_array($f['env'] ?? 'production', ['development', 'local'], true);
+    $out = [];
+    // Only what needs a decision is printed: PASS, SKIP, WARN and FAIL. INFO rows (what a kit feature is set to, which overrides exist, a plugin list) were dropped:
+    // they were never a reason to act, and a long list hides the one row that is.
+    $add = function (string $status, string $check, string $detail = '') use (&$out) {
+        if ($status !== 'INFO') {
+            $out[] = [$status, $check, $detail];
+        }
+    };
+    $cmp = function (string $check, bool $ok, string $detail = '', bool $devSkip = false) use ($add, $dev) {
+        $add($ok ? 'PASS' : ($devSkip && $dev ? 'SKIP' : 'FAIL'), $check, $ok ? '' : $detail);
+    };
+
+    // The environment as .env declares it (bp): a .env split between environments (a production WP_ENV with a staging
+    // DISALLOW_INDEXING, or a staging file copied to production) looks clean row by row. Only when the facts carry WP_ENV.
+    if (array_key_exists('wp_env', $f)) {
+        $wpEnv = (string) $f['wp_env'];
+        $type = (string) ($f['env'] ?? '');
+        $expected = ['production' => ['production'], 'staging' => ['staging'], 'development' => ['local', 'development']][$wpEnv] ?? null;
+        $cmp('WP_ENV and WP_ENVIRONMENT_TYPE agree', $expected !== null && in_array($type, $expected, true), "WP_ENV is '$wpEnv' but the environment type is '$type'");
+        $indexing = ! empty($f['disallow_indexing']);
+        if ($wpEnv === 'production') {
+            $cmp('DISALLOW_INDEXING is off on production', ! $indexing, 'DISALLOW_INDEXING is true: search engines are blocked');
+            $cmp('STAGING_MAIL_TO is not set on production', empty($f['staging_mail_to']), 'a staging variable is set (a staging .env copied here?)');
+        } elseif ($wpEnv === 'staging') {
+            $cmp('DISALLOW_INDEXING is on for staging', $indexing, 'DISALLOW_INDEXING is not true: staging can be indexed');
+            $add('PASS', 'STAGING_MAIL_TO', ! empty($f['staging_mail_to']) ? 'staging mail goes to the one test address' : 'staging mail is suppressed (no STAGING_MAIL_TO)');
+        }
+    }
+
+    // Some staging sites run Wordfence and some do not (rp, tcs, mds, jsd and cs have it active; facts, 2026-11-13). Inactive on staging is a SKIP, not a FAIL,
+    // and only while it really is inactive. An ACTIVE Wordfence on staging is held to the whole standard, loginSec_disableAuthorScan included.
+    $wfOffOnStaging = ($f['env'] ?? '') === 'staging' && ! in_array('wordfence', (array) ($f['active_plugins'] ?? []), true);
+
+    // Wordfence
+    $wf = $f['wordfence'] ?? null;
+    if ($wfOffOnStaging) {
+        $add('SKIP', 'Wordfence', 'not active on this staging site (some stagings run it, this one does not)');
+    } elseif (! is_array($wf)) {
+        $add('FAIL', 'Wordfence', 'wfConfig is not available (plugin inactive?)');
+    } else {
+        foreach (pkde_drift_wordfence_standard() as $key => $want) {
+            $got = isset($wf[$key]) ? (string) $wf[$key] : '(unset)';
+            $cmp("Wordfence $key", $got === $want, "expected $want, got $got");
+        }
+        $alertAddress = pkde_alert_address((string) ($f['alert_email_const'] ?? ''), (string) ($f['wp_admin_email'] ?? ''));
+        if ($alertAddress !== '') {
+            // The .env names the alert address: Wordfence's recipients are exactly it. No address is printed.
+            $cmp(
+                'Wordfence alertEmails is exactly the alert address (WORDFENCE_ALERT_EMAIL, else WP_ADMIN_EMAIL)',
+                pkde_alert_emails_exact((string) ($wf['alertEmails'] ?? ''), $alertAddress),
+                'alertEmails differs from the alert address in .env: the next release sets it (bin/deploy/wordfence-standard.php), or run that file with wp eval-file',
+            );
+        } else {
+            $emails = array_map('trim', explode(',', strtolower((string) ($wf['alertEmails'] ?? ''))));
+            $admin = strtolower((string) ($f['admin_email'] ?? ''));
+            $cmp(
+                'Wordfence alertEmails includes admin_email',
+                $admin !== '' && in_array($admin, $emails, true),
+                $emails === [''] ? 'alertEmails is empty: no alert reaches anyone' : 'admin_email is not in alertEmails',
+            );
+        }
+    }
+
+    // W3 Total Cache (the standard in bin/deploy/w3tc-standard.php, written by bin/deploy/w3tc-settings.php)
+    $w3 = $f['w3tc'] ?? null;
+    if (! is_array($w3)) {
+        $cmp('W3 Total Cache', false, 'W3TC is not available (plugin inactive?)', true);
+    } else {
+        $sitemap = (string) ($w3['expected_sitemap'] ?? '');
+        foreach (pkde_w3tc_standard($sitemap) as $key => $want) {
+            $got = $w3['settings'][$key] ?? null;
+            $show = fn($v) => is_bool($v) ? ($v ? 'on' : 'off') : ($v === null ? '(unset)' : (string) $v);
+            $ok = is_bool($want) ? (bool) $got === $want && $got !== null : (string) $got === (string) $want;
+            $cmp("W3TC $key", $ok, 'expected ' . $show($want) . ', got ' . $show($got), true);
+        }
+        $uriMissing = array_diff(pkde_w3tc_reject_uris(), (array) ($w3['reject_uris'] ?? []));
+        $cmp('W3TC page cache never caches robots.txt or the sitemaps', $uriMissing === [], 'missing from Never cache the following pages: ' . implode(', ', $uriMissing) . ' (re-run bin/deploy/w3tc-settings.php, then fix_environment)', true);
+        if (! empty($f['woocommerce_active'])) {
+            // Default: the basket cookies skip the page cache. Opted in (pkde_cache_basket_visitors = 1): they must NOT, or the opt-in does nothing.
+            if (! empty($f['cache_basket_visitors'])) {
+                $rejected = array_intersect(pkde_w3tc_basket_cookies(), (array) ($w3['reject_cookies'] ?? []));
+                $cmp('W3TC page cache serves visitors with a basket (opted in)', $rejected === [], 'still rejected: ' . implode(', ', $rejected) . ' (re-run bin/deploy/w3tc-settings.php)', true);
+                // The opt-in is only safe while no page prints per-visitor data: the kit's cache-safe basket count (App\no_page_cache exists) and no theme view reading the basket.
+                $cmp('Cache-safe theme for basket visitors: the kit marks personal pages uncacheable', ! empty($f['kit_cache_safe']), 'App\\no_page_cache() is missing: bump pkde/sage-kit to 2026.11.06 or later before opting in', true);
+                $personal = (array) ($f['personal_views'] ?? []);
+                $cmp('Cache-safe theme for basket visitors: no view prints per-visitor data', $personal === [], 'read the basket, a notice, a cookie or the user: ' . implode(', ', $personal), true);
+            } else {
+                $missing = array_diff(pkde_w3tc_woocommerce_cookies(), (array) ($w3['reject_cookies'] ?? []));
+                $cmp('W3TC page cache skips the WooCommerce cookies', $missing === [], 'missing: ' . implode(', ', $missing), true);
+            }
+        }
+    }
+
+    // W3TC's working parts beyond its options (bb and tcs staging, 2026-11-05): the page cache only serves with WP_CACHE true, the cleanup and
+    // preload events must be scheduled (applying the standard by script does not schedule them; w3tc-settings.php does), and the newest cached page
+    // must be younger than the lifetime, or the preloader and the garbage collection are not running (WP-Cron needs visits, or a server-side cron).
+    // Only when the facts carry them, and only while the page cache is switched on.
+    if (is_array($w3) && ! empty($w3['settings']['pgcache.enabled']) && array_key_exists('page_cache', $f)) {
+        $pc = (array) $f['page_cache'];
+        $cmp('WP_CACHE is true (the page cache serves)', ! empty($pc['wp_cache']), 'WP_CACHE is not true: WordPress never loads the page-cache drop-in (add WP_CACHE=true to the shared .env)', true);
+        foreach (['w3_pgcache_prime' => 'preload', 'w3_pgcache_cleanup' => 'cleanup'] as $event => $label) {
+            if ($event === 'w3_pgcache_prime' && empty($w3['settings']['pgcache.prime.enabled'])) {
+                continue;
+            }
+            $cmp("W3TC $label cron event is scheduled", ! empty($pc['cron'][$event]), "$event is not scheduled (run bin/deploy/w3tc-settings.php, which schedules it)", true);
+        }
+        $lifetime = (int) ($w3['settings']['pgcache.lifetime'] ?? 86400);
+        $age = $pc['newest_age'] ?? null;
+        $cmp(
+            'W3TC newest cached page is younger than the lifetime',
+            $age !== null && (int) $age <= $lifetime + 3600,
+            $age === null ? 'no cached page found: the cache is empty or not being filled (preloader/cron not running?)' : sprintf('the newest cached page is %d hours old against a %d hour lifetime: the preloader and garbage collection are not running (is a server-side cron set?)', intdiv((int) $age, 3600), intdiv($lifetime, 3600)),
+            true,
+        );
+    }
+
+    // Rank Math must be registered (the setup wizard skipped, or an account connected). Unregistered, Rank Math silently disables its
+    // modules: the sitemap, titles and schema stop. A fresh or scrubbed database loses the flag; bin/setup sets it.
+    if (in_array('seo-by-rank-math', (array) ($f['active_plugins'] ?? []), true)) {
+        $rm = $f['rankmath'] ?? [];
+        $cmp('Rank Math is registered (registration skipped or account connected)', ! empty($rm['skip']) || ! empty($rm['connected']), 'neither rank_math_registration_skip nor a connected account: Rank Math disables its modules (sitemap, titles, schema); run `wp option update rank_math_registration_skip 1`');
+    }
+
+    // Relevanssi (the shop's search): installed but never indexed, it answers every search with nothing. settings script: the kit's
+    // bin/relevanssi-settings.php rebuilds the index. Only while the plugin is active; the fact is the number of rows in its index table.
+    // Wordfence Extended Protection, only for a site that opted in with WORDFENCE_EXTENDED_PROTECTION=1: web/.user.ini must point at the shim in shared/waf
+    // (the row reads files and one URL, not Wordfence itself, so it also runs on a staging site where Wordfence is inactive: that is where the pilot proves the mechanism)
+    if (is_array($f['waf_prepend'] ?? null) && ! empty($f['waf_prepend']['enabled'])) {
+        $wp = $f['waf_prepend'];
+        $cmp('Wordfence Extended Protection: web/.user.ini points at the shared shim', ! empty($wp['ini_target']) && ! empty($wp['target_exists']) && ! empty($wp['target_has_bootstrap']), ! empty($wp['ini_target']) ? 'the auto_prepend_file target is missing or does not load the Wordfence bootstrap: run bin/deploy/waf-prepend.sh (a release does it)' : 'web/.user.ini has no auto_prepend_file line: the next release writes it (bin/deploy/waf-prepend.sh), or the site is not on 2026.11.13.4 or later');
+        // web/.user.ini names the firewall shim's path: it must not be downloadable (403, 404 or a redirect; a gate or no loopback is a SKIP).
+        if (array_key_exists('userini_status', $wp)) {
+            $uis = (int) $wp['userini_status'];
+            if (in_array($uis, [0, 401], true)) {
+                $add('SKIP', 'Wordfence Extended Protection: /.user.ini is not downloadable', 'the probe answered ' . ($uis ?: 'no response') . ': check it from outside with curl -I <site>/.user.ini (expect 403 or 404)');
+            } else {
+                $cmp('Wordfence Extended Protection: /.user.ini is not downloadable', $uis < 200 || $uis >= 300, 'it answers ' . $uis . ' and serves the file (it names the shim path): add <Files ".user.ini"> Require all denied </Files> to the shared .htaccess, or switch the flag off (bin/deploy/waf-prepend.sh --rollback)');
+            }
+        }
+    }
+
+    // Shop filters: the groups a shop declares in config/shop-filters.php must all resolve; an INFO row lists them so a change between releases shows.
+    if (! empty($f['woocommerce_active']) && is_array($f['shop_filters'] ?? null)) {
+        $sf = $f['shop_filters'];
+        $missing = (array) ($sf['invalid'] ?? []);
+        $cmp('Shop filters: declared groups resolve', $missing === [], 'skipped (not a product taxonomy, price or stock): ' . implode(', ', $missing) . ': fix config/shop-filters.php');
+        $add('INFO', 'Shop filters: groups', ((bool) ($sf['declared'] ?? false) ? 'declared' : 'not declared (the kit\'s defaults)') . ': ' . implode(', ', (array) ($sf['groups'] ?? [])));
+    }
+
+    // REST users: an anonymous GET of the user routes must not list anybody (401, 403 or 404; the platform module rest-users-private answers 404 in every environment)
+    if (is_array($f['rest_users'] ?? null)) {
+        foreach (['list' => '/wp/v2/users', 'single' => '/wp/v2/users/<id>'] as $key => $route) {
+            if (! array_key_exists($key, $f['rest_users']) || $f['rest_users'][$key] === null) {
+                continue;
+            }
+            $status = (int) $f['rest_users'][$key];
+            $cmp("Anonymous GET $route does not list users (401, 403 or 404)", in_array($status, [401, 403, 404], true), "answers $status: bump pkde/platform to 2026.11.13.1 or later (module rest-users-private), or turn on Wordfence's Prevent discovery of usernames");
+        }
+    }
+
+    // Author archives: closed for users without an allowed role by the platform module; INFO when real authors lack the role (their archive is a 404 by design)
+    if (is_array($f['author_archive'] ?? null)) {
+        $aa = $f['author_archive'];
+        $cmp('Author archives are closed for users without an allowed role (platform module author-archives)', ! empty($aa['module']), 'the pkde-platform module author-archives is not loaded: bump pkde/platform to 2026.11.13 or later');
+        $without = (int) ($aa['without_role'] ?? 0);
+        // FAIL, not INFO: wp-admin's profile form has ONE role dropdown, so saving the profile of an administrator who was given the author role as a second role
+        // silently drops it. A user with published posts and no allowed role has a 404 archive and a byline that links home.
+        $cmp('Every user with published posts has an allowed author role', $without === 0, $without . ' of ' . (int) ($aa['authors'] ?? 0) . ' users with published posts hold none of (' . implode(', ', (array) ($aa['roles'] ?? [])) . '): add the role without removing theirs (wp user add-role <ID> author), or set AUTHOR_ARCHIVE_ROLES in .env');
+        if (array_key_exists('slug_equals_login', $aa)) {
+            $same = (int) $aa['slug_equals_login'];
+            $cmp('Author archive slug (user_nicename) differs from the login', $same === 0, $same . ' of ' . (int) ($aa['allowed_users'] ?? 0) . ' users with an allowed role have an archive slug equal to their login name (the URL gives the login away): change the nicename (names are not printed here)');
+        }
+    }
+
+    // The Rank Math baseline: an existing site sees what differs from where a new site starts (bin/deploy/rankmath-baseline.php sets it).
+    if (is_array($f['rankmath_seo'] ?? null)) {
+        foreach (pkde_rankmath_findings((array) $f['rankmath_seo']['titles'], (array) $f['rankmath_seo']['post_types'], (string) $f['rankmath_seo']['locale'], (string) ($f['rankmath_seo']['want_locale'] ?? PKDE_RANKMATH_LOCALE)) as [$check, $ok, $detail]) {
+            $cmp($check, $ok, $detail . ' (read it, then run bin/deploy/rankmath-baseline.php, or change the value on purpose and say why)', true);
+        }
+    }
+
+    // Search engine signals as the site really answers them: requests the check makes to the site's own address. A probe that did not get a 200
+    // (a staging gate, a firewall, no loopback DNS) is a SKIP naming what it got, never a FAIL.
+    if (is_array($f['seo_probe'] ?? null)) {
+        $sp = $f['seo_probe'];
+        $wpEnvSeo = (string) ($f['wp_env'] ?? ($dev ? 'development' : 'production'));
+        $noindex = fn(string $header) => stripos($header, 'noindex') !== false;
+        $reached = function (string $check, ?array $probe) use ($add): bool {
+            if ($probe === null) {
+                return false;
+            }
+            if ((int) ($probe['status'] ?? 0) !== 200) {
+                $add('SKIP', $check, 'the probe answered ' . ((int) ($probe['status'] ?? 0) ?: 'no response') . ' (a gate, a firewall or no loopback): check it from outside');
+
+                return false;
+            }
+
+            return true;
+        };
+
+        if ($wpEnvSeo === 'production') {
+            if ($reached('Production homepage is indexable', $sp['home'] ?? null)) {
+                $cmp('Production homepage is indexable (no noindex in X-Robots-Tag)', ! $noindex((string) $sp['home']['x_robots']), 'X-Robots-Tag says "' . $sp['home']['x_robots'] . '": a staging .htaccess block or module is live on production');
+            }
+            if ($reached('Production robots.txt', $sp['robots_txt'] ?? null)) {
+                $cmp('Production robots.txt does not disallow the whole site', preg_match('/^\s*Disallow:\s*\/\s*$/mi', (string) $sp['robots_txt']['body']) !== 1, 'robots.txt says Disallow: / (a staging copy served here?)');
+            }
+        } else {
+            if ($reached('Staging homepage carries X-Robots-Tag noindex, nofollow', $sp['home'] ?? null)) {
+                $cmp('Staging: pages carry X-Robots-Tag noindex, nofollow (platform module staging-safety-net)', $noindex((string) $sp['home']['x_robots']) && stripos((string) $sp['home']['x_robots'], 'nofollow') !== false, 'X-Robots-Tag is "' . $sp['home']['x_robots'] . '": bump pkde/platform to the release with the module staging-safety-net');
+            }
+            if ($reached('Staging static file carries X-Robots-Tag noindex, nofollow', $sp['static'] ?? null)) {
+                $cmp('Staging: static files carry X-Robots-Tag noindex, nofollow (.htaccess block Staging Noindex)', $noindex((string) $sp['static']['x_robots']), 'a static file answers without it: the next release adds the block (bin/deploy/activate-release.sh), or mod_headers is off');
+            }
+            if ($reached('Staging robots.txt', $sp['robots_txt'] ?? null)) {
+                $body = (string) $sp['robots_txt']['body'];
+                $cmp('Staging: robots.txt disallows everything and names no sitemap', preg_match('/^\s*Disallow:\s*\/\s*$/mi', $body) === 1 && stripos($body, 'sitemap:') === false, 'robots.txt is not "Disallow: /" alone');
+            }
+        }
+
+        // The security headers the shared .htaccess sets (pkde-deploy 2026.11.18.1, block Security Headers). HSTS is not part of it (owner decision).
+        if ($reached('Security headers', $sp['home'] ?? null)) {
+            $sec = (array) ($sp['home']['security'] ?? []);
+            $want = ['x-content-type-options' => 'nosniff', 'referrer-policy' => 'strict-origin-when-cross-origin', 'x-frame-options' => 'SAMEORIGIN'];
+            foreach ($want as $name => $value) {
+                $cmp('Security header ' . $name . ': ' . $value, strcasecmp(trim((string) ($sec[$name] ?? '')), $value) === 0, 'the homepage answers "' . ($sec[$name] ?? '') . '": the next release adds the Security Headers block to the shared .htaccess, or mod_headers is off', true);
+            }
+            $cmp('Security header permissions-policy is set', trim((string) ($sec['permissions-policy'] ?? '')) !== '', 'the homepage sends no Permissions-Policy', true);
+        }
+
+        // The icons are real files and the layered-nav flood rule answers 410 (deploy block Query Flood Guard; bin/setup writes the icons).
+        foreach (['favicon' => '/favicon.ico', 'apple_touch' => '/apple-touch-icon.png'] as $key => $path) {
+            if (is_array($sp[$key] ?? null) && (int) $sp[$key]['status'] === 404) {
+                $cmp('Static ' . $path . ' is a real image file, not a WordPress page', false, 'it answers 404: add web' . $path . ' (bin/generate-favicon.php writes it)', true);
+            } elseif ($reached('Static ' . $path, $sp[$key] ?? null)) {
+                $cmp('Static ' . $path . ' is a real image file, not a WordPress page', stripos((string) ($sp[$key]['type'] ?? ''), 'image/') === 0, 'it answers 200 as "' . ($sp[$key]['type'] ?? '') . '": WordPress serves it (every request boots PHP). Add web' . $path . ' (bin/generate-favicon.php writes it)', true);
+            }
+        }
+        if (is_array($sp['flood'] ?? null)) {
+            $floodStatus = (int) ($sp['flood']['status'] ?? 0);
+            if (in_array($floodStatus, [0, 401, 403], true)) {
+                $add('SKIP', 'A WooCommerce layered-nav query (?filter_x=a,b&query_type_x=or) answers 410', 'the probe answered ' . ($floodStatus ?: 'no response') . ' (a gate, a firewall or no loopback): check it from outside');
+            } else {
+                $cmp('A WooCommerce layered-nav query (?filter_x=a,b&query_type_x=or) answers 410', $floodStatus === 410, 'it answers ' . $floodStatus . ': the Query Flood Guard block is missing from the shared .htaccess (the next release adds it) or mod_rewrite is off', true);
+            }
+        }
+
+        // A filtered or sorted shop URL is noindex in the header AND in the meta tag (kit: app/woocommerce/filter-query.php).
+        if (is_array($sp['faceted'] ?? null) && $reached('Faceted shop URL is noindex', $sp['faceted'])) {
+            $cmp('Faceted shop URL (?orderby=) is noindex in the X-Robots-Tag header', $noindex((string) $sp['faceted']['x_robots']), 'no noindex in the header: bump pkde/sage-kit to the release with the faceted rule');
+            $cmp('Faceted shop URL (?orderby=) is noindex in the robots meta tag', (bool) ($sp['faceted']['meta_noindex'] ?? false), 'the meta robots tag does not say noindex (Rank Math printing index?)');
+        }
+
+        // The sitemap lists no URL that is noindex: the WooCommerce cart, checkout and my-account pages, and no URL with a query string.
+        if (is_array($sp['sitemap'] ?? null) && $reached('Sitemap lists no noindex URL', $sp['sitemap'])) {
+            $bad = (array) ($sp['sitemap']['noindex'] ?? []);
+            $cmp('Sitemap lists no noindex URL (cart, checkout, my-account, query-string URLs)', $bad === [], 'listed: ' . implode(', ', $bad) . ' (bin/setup excludes the shop pages; an existing site runs the line in the launch guide, "SEO at go-live")');
+        }
+    }
+
+    if (in_array('relevanssi', (array) ($f['active_plugins'] ?? []), true) && array_key_exists('relevanssi_indexed', $f)) {
+        $cmp('Relevanssi index is built (searches find products)', (int) $f['relevanssi_indexed'] > 0, 'the Relevanssi index is empty: run bash bin/deploy/wp.sh eval-file bin/deploy/relevanssi-settings.php (it rebuilds the index)', true);
+    }
+
+    // Breadcrumbs (parity): the kit owns the trail. Its filters force Rank Math's settings to the standard (" / ", "Home") and the kit declares
+    // theme support so the module is on whatever the wp-admin setting says. The kit builds no trail of its own (owner, 2026-11-06).
+    // Sites on a kit older than 2026.11.06.3 have no standard: their trail follows each site's own Rank Math settings.
+    $bc = $f['breadcrumbs'] ?? null;
+    if (is_array($bc)) {
+        $cmp(
+            'Breadcrumbs: the kit sets the standard (separator "/", label "Home")',
+            ! empty($bc['kit']) && ($bc['separator'] ?? '') === '/' && ($bc['home'] ?? '') === 'Home',
+            empty($bc['kit']) ? 'App\\breadcrumb_standard() is missing: bump pkde/sage-kit to 2026.11.06.3 or later' : 'separator "' . ($bc['separator'] ?? '') . '", label "' . ($bc['home'] ?? '') . '" (a filter or a copy overrides the kit)',
+        );
+        if (! empty($bc['rank_math'])) {
+            $cmp('Breadcrumbs: Rank Math\'s breadcrumb module is on (its BreadcrumbList schema)', ! empty($bc['module_on']), 'off: pages outside the shop have no trail and no BreadcrumbList schema (the kit declares theme support unless pkde_kit/force_rank_math_breadcrumbs is false)', true);
+        }
+    }
+
+    // Turnstile
+    $ts = $f['turnstile'] ?? [];
+    $cmp('Turnstile widget always visible (cfturnstile_appearance)', ($ts['appearance'] ?? 'always') === 'always', 'expected always, got ' . (string) ($ts['appearance'] ?? ''));
+    $cmp('Turnstile on the login form (cfturnstile_login)', (string) ($ts['login'] ?? '') === '1', 'expected 1, got ' . (string) ($ts['login'] ?? '(unset)'), true);
+    $cmp('Turnstile on all Contact Form 7 forms (cfturnstile_cf7_all)', (string) ($ts['cf7_all'] ?? '') === '1' || ! ($f['cf7_active'] ?? false), 'expected 1, got ' . (string) ($ts['cf7_all'] ?? '(unset)'), true);
+    $cmp('Turnstile site and secret keys present', ($ts['keys_present'] ?? false) === true, 'a key is missing (values are never printed)', true);
+    $cmp('Turnstile keys tested in wp-admin (cfturnstile_tested)', ($ts['tested'] ?? '') === 'yes', 'expected yes, got ' . (string) ($ts['tested'] ?? '(unset)'), true);
+    $add('INFO', 'Turnstile cfturnstile_reset', 'is ' . ((string) ($ts['reset'] ?? '') === '1' ? 'on' : 'off') . ' (no standard decided)');
+
+    // WPS Hide Login
+    $hl = $f['hide_login'] ?? [];
+    $slug = (string) ($hl['slug'] ?? '');
+    $cmp('WPS Hide Login active', ($hl['active'] ?? false) === true, 'plugin is not active', true);
+    // The slug must come from .env (LOGIN_SLUG), the same on staging and production; the value is never printed.
+    if (! empty($hl['active'])) {
+        $cmp('Login slug managed by .env', ! empty($hl['managed']), 'LOGIN_SLUG is not set (or unusable, or the login-slug module is off): the slug is the stored whl_page option and can differ between staging and production; copy production\'s whl_page into LOGIN_SLUG in shared/.env', true);
+    }
+    $cmp('WPS Hide Login slug changed from the default', $slug !== '' && $slug !== 'login', $slug === '' ? 'no custom slug set' : 'slug is still the default "login"', true);
+
+    // Contact Form 7 forms
+    foreach ($f['cf7_forms'] ?? [] as $form) {
+        $label = 'CF7 form #' . (int) ($form['id'] ?? 0);
+        $cmp("$label has no visitor Subject field", empty($form['has_subject']), 'form still has a your-subject field');
+        $cmp("$label has a descriptive name", pkde_drift_form_name_ok((string) ($form['title'] ?? '')), 'named "' . (string) ($form['title'] ?? '') . '": give it a name that says what it is, such as "Contact form" or "Park home enquiry"');
+        $cmp("$label Mail Ccs the admin (Cc: [_site_admin_email])", pkde_drift_cc_admin_ok((string) ($form['headers'] ?? '')), 'the Mail tab\'s Additional headers has no "Cc: [_site_admin_email]" line');
+        $cmp("$label mail subject is the fixed text", pkde_drift_subject_ok((string) ($form['subject'] ?? ''), (string) ($f['blogname'] ?? '')), 'got "' . (string) ($form['subject'] ?? '') . '"');
+        if (! empty($form['mail2_active'])) {
+            $cmp("$label Mail (2) subject is the fixed text", pkde_drift_subject_ok((string) ($form['mail2_subject'] ?? ''), (string) ($f['blogname'] ?? '')), 'got "' . (string) ($form['mail2_subject'] ?? '') . '"');
+        }
+    }
+
+    // The editor's catalogue: no WordPress or WooCommerce patterns, Rank Math's blocks hidden from the inserter. Only when the facts carry the key.
+    if (array_key_exists('editor_catalog', $f) && is_array($f['editor_catalog'])) {
+        $c = $f['editor_catalog'];
+        if ($c['bundled_patterns'] !== null) {
+            $cmp('Block editor: no core or WooCommerce patterns registered', (int) $c['bundled_patterns'] === 0, (int) $c['bundled_patterns'] . ' bundled patterns are still registered (the platform editor-settings module removes them)');
+        }
+        if ($c['rank_math_visible'] !== null) {
+            $cmp('Block editor: Rank Math blocks hidden from the inserter', (array) $c['rank_math_visible'] === [], 'still in the inserter: ' . implode(', ', (array) $c['rank_math_visible']));
+        }
+    }
+
+    // FAQs: the post type is not a public thing, the right people manage it, the old hand-typed blocks and empty groups are listed. Only when the facts carry the key.
+    if (array_key_exists('faq', $f)) {
+        $q = $f['faq'];
+        if (! is_array($q)) {
+            $add('INFO', 'FAQs post type', 'the platform faq module is not loaded (an older platform release, or PKDE_PLATFORM_DISABLE names it)');
+        } else {
+            $cmp('FAQs: no public URL, archive or search', empty($q['public']) && empty($q['rewrite']) && empty($q['has_archive']), 'the pkde_faq post type is public, publicly queryable, has an archive or a rewrite');
+            $cmp('FAQs: not listed in the sitemap', empty($q['in_sitemap']), 'pkde_faq is in the sitemap');
+            $missing = array_keys(array_filter(['Administrator lacks manage_pkde_faqs' => empty($q['admin_cap']), 'the SEO role is missing' => empty($q['seo_role']), 'the SEO role lacks manage_pkde_faqs' => ! empty($q['seo_role']) && empty($q['seo_cap']), 'Editors have manage_pkde_faqs' => ! empty($q['editor_cap'])]));
+            $cmp('FAQs: Administrators and the SEO role manage them, Editors do not', $missing === [], implode('; ', $missing) . ' (the platform faq module installs the capability and the role)');
+            if (! empty($q['typed_blocks'])) {
+                $list = [];
+                foreach ((array) $q['typed_blocks'] as $slug => $n) {
+                    $list[] = "$slug ($n)";
+                }
+                $add('INFO', 'FAQ blocks still typed by hand', count($list) . ' page(s): ' . implode(', ', $list) . ' (bin/deploy/faq-migrate.php plan, then apply with the approved mapping)');
+            }
+            if (! empty($q['empty_groups'])) {
+                $add('WARN', 'FAQ groups with no published FAQ', implode(', ', (array) $q['empty_groups']));
+            }
+        }
+    }
+
+    // Site details: the type's required fields are present, a stored value that differs from the declaration is listed, and a value typed separately in Rank Math that
+    // differs from Site details is flagged (Site details overrides it in the output). Only when the facts carry the key.
+    if (array_key_exists('site_details', $f)) {
+        $sd = $f['site_details'];
+        if (! is_array($sd)) {
+            $add('INFO', 'Site details', 'the platform site-details module is not loaded (an older platform release, or PKDE_PLATFORM_DISABLE names it)');
+        } else {
+            $cmp('Site details: the required fields for a ' . $sd['type'] . ' are present', empty($sd['missing']), 'missing: ' . implode(', ', (array) $sd['missing']) . ' (Settings > Site details)');
+            if (! empty($sd['differs'])) {
+                $add('INFO', 'Site details differing from the declaration', implode(', ', (array) $sd['differs']) . ' (edited in wp-admin; the declaration only seeds an unlocked field)');
+            }
+            if (! empty($sd['legacy'])) {
+                $add('WARN', 'Site details not migrated; reading legacy client_* values', implode(', ', (array) $sd['legacy']) . ' come from the old client_* options, so the site shows them but they cannot be edited in Settings > Site details yet: run bin/deploy/site-details-migrate.php plan, then apply');
+            }
+            if (! empty($sd['rank_math'])) {
+                $add('WARN', 'Rank Math holds a different ' . implode(', ', (array) $sd['rank_math']) . ' than Site details', 'typed separately in Rank Math Local SEO; Site details wins in the structured data, so clear it in Rank Math to keep one source');
+            }
+        }
+    }
+
+    // Legal documents: Privacy and Cookies published on every site, Terms and Returns on a shop, the core privacy setting and the WooCommerce terms setting pointing at a
+    // published document, an effective date on each, no address shared with a Page. Only when the facts carry the key.
+    if (array_key_exists('legal', $f)) {
+        $l = $f['legal'];
+        if (! is_array($l)) {
+            $add('INFO', 'Legal documents', 'the platform legal module is not loaded (an older platform release, or PKDE_PLATFORM_DISABLE names it)');
+        } else {
+            $has = fn(string $type) => ! empty($l['types'][$type]);
+            $shop = ! empty($f['woocommerce_active']);
+            $cmp('Legal: a Privacy document is published', $has('privacy'), 'no published legal document of type privacy (bin/deploy/legal-migrate.php plan)');
+            $cmp('Legal: a Cookies document is published', $has('cookies'), 'no published legal document of type cookies');
+            if ($shop) {
+                $cmp('Legal: a Terms document is published', $has('terms'), 'no published legal document of type terms (a shop needs one)');
+                $cmp('Legal: a Returns document is published', $has('returns'), 'no published legal document of type returns (a shop needs one)');
+                $cmp('Legal: the WooCommerce terms setting points at a published document', ($l['terms_setting'] ?? '') === 'document', 'woocommerce_terms_page_id is ' . ($l['terms_setting'] ?? 'unset') . ' (WooCommerce > Settings > Advanced > Terms and conditions)');
+            }
+            $cmp('Legal: the core privacy setting points at a published document', ($l['privacy_setting'] ?? '') === 'document', 'wp_page_for_privacy_policy is ' . ($l['privacy_setting'] ?? 'unset') . ' (Settings > Privacy)');
+            $cmp('Legal: every document has an effective date', empty($l['no_date']), 'no effective date: ' . implode(', ', (array) ($l['no_date'] ?? [])));
+            $cmp('Legal: no document shares its address with a Page', empty($l['clashes']), 'shared with a Page (the Page wins): ' . implode(', ', (array) ($l['clashes'] ?? [])));
+        }
+    }
+
+    // Global blocks (tier 3): a block used on published pages needs its declaration (config/pkde-sections.php), or it prints nothing.
+    foreach ((array) ($f['global_blocks'] ?? []) as $name => $g) {
+        if ((int) ($g['pages'] ?? 0) > 0) {
+            $cmp("Global block $name has its declared content", ! empty($g['declared']), "used on {$g['pages']} published page(s) but config/pkde-sections.php declares no text for it, so it prints nothing");
+        }
+    }
+
+    // The block editor by role (platform module editor-settings): what a non-Administrator is offered. Only when the facts carry the key
+    // (an older drift run does not); a platform without the module is an INFO row, not a failure.
+    if (array_key_exists('editor_settings', $f)) {
+        $e = $f['editor_settings'];
+        if (! is_array($e)) {
+            $add('INFO', 'Block editor settings by role', 'the platform editor-settings module is not loaded (an older platform release, or PKDE_PLATFORM_DISABLE names it)');
+        } else {
+            $cmp('Block editor: an Editor cannot lock or unlock blocks', empty($e['can_lock']), 'canLockBlocks is on for a user who is not an Administrator');
+            $cmp('Block editor: custom colours and gradients are for Administrators only', empty($e['custom_colors']), 'the full colour picker is on for a user who is not an Administrator');
+            $cmp('Block editor: remote block patterns are off', empty($e['remote_patterns']), "core's pattern directory is still loaded");
+            $cmp('Block editor: an Editor gets the curated block list (no shortcode block)', ! empty($e['blocks_limited']) && empty($e['shortcode']), 'the block list is not limited, or the shortcode block is offered to an Editor');
+        }
+    }
+
+    // Form lookup keys: INFO for which forms carry one; FAIL only when a theme file asks App\form_id('x') and no form has that key; INFO for a title lookup left over.
+    if ($f['cf7_active'] ?? false) {
+        $tagged = [];
+        foreach ($f['cf7_forms'] ?? [] as $form) {
+            if (($form['key'] ?? '') !== '') {
+                $tagged[(string) $form['key']] = (int) ($form['id'] ?? 0);
+            }
+        }
+        $list = [];
+        foreach ($tagged as $key => $id) {
+            $list[] = "$key (#$id)";
+        }
+        $add('INFO', 'CF7 forms with a lookup key (_pkde_form_key)', $list === [] ? 'none' : implode(', ', $list));
+        $usage = (array) ($f['cf7_key_usage'] ?? []);
+        foreach ((array) ($usage['keys'] ?? []) as $key) {
+            $cmp("A theme file asks for CF7 form key \"$key\": a form carries it", isset($tagged[$key]), 'no form has _pkde_form_key = ' . $key . ': run bin/deploy/cf7-form-key.php ' . $key . '="<the form\'s title>" (it tags the form and prints its ID)');
+        }
+        if (! empty($usage['by_title'])) {
+            $add('INFO', 'A theme file still finds a CF7 form by its title', implode(', ', (array) $usage['by_title']) . ': a rename of the form breaks it; use \\App\\form_id(\'key\') (pkde-sage-kit 2026.11.19.2)');
+        }
+    }
+
+    // Site identity
+    if (trim((string) ($f['wp_admin_email'] ?? '')) !== '') {
+        $cmp('admin_email equals WP_ADMIN_EMAIL (.env)', strcasecmp(trim((string) ($f['admin_email'] ?? '')), trim((string) $f['wp_admin_email'])) === 0, 'admin_email differs from WP_ADMIN_EMAIL in .env (addresses are not printed here): wp option update admin_email "<the .env value>"', true);
+    }
+    $cmp('admin_email is not a placeholder', ! pkde_drift_is_placeholder_email((string) ($f['admin_email'] ?? '')), 'admin_email is empty or a placeholder domain', true);
+    $desc = trim((string) ($f['blogdescription'] ?? ''));
+    $cmp('blogdescription is set and not the WordPress default', $desc !== '' && stripos($desc, 'just another wordpress') === false, $desc === '' ? 'empty' : 'still the default tagline', true);
+
+    // Plugins
+    $active = (array) ($f['active_plugins'] ?? []);
+    $cmp('An SEO plugin is active (Rank Math or Yoast)', array_intersect(pkde_drift_seo_plugins(), $active) !== [], 'none of ' . implode(', ', pkde_drift_seo_plugins()) . ' is active');
+    $expected = pkde_drift_core_plugins();
+    if ($f['cf7_active'] ?? false) {
+        $expected[] = 'simple-cloudflare-turnstile';
+    }
+    if (! empty($f['smtp_host_set'])) {
+        $expected[] = 'post-smtp';
+    }
+    if (! $dev) {
+        $expected[] = 'wps-hide-login';
+    }
+    // The opt-ins (Turnstile with CF7, Post SMTP with SMTP_HOST, the hidden login) are not active on a development stack.
+    foreach ($expected as $slugName) {
+        if ($slugName === 'wordfence' && $wfOffOnStaging) {
+            $add('SKIP', 'Plugin wordfence active', 'not active on this staging site (some stagings run it, this one does not)');
+
+            continue;
+        }
+        $cmp("Plugin $slugName active", in_array($slugName, $active, true), 'not active', in_array($slugName, ['simple-cloudflare-turnstile', 'post-smtp', 'wps-hide-login'], true));
+    }
+    // Post SMTP must be able to send, not just be active: 4.0.2 marks its transport "not ready" when the From address is empty. Only
+    // presence is checked (a value is never printed).
+    if (in_array('post-smtp', $active, true)) {
+        $ps = $f['post_smtp'] ?? null;
+        $missing = [];
+        if (! is_array($ps)) {
+            $missing[] = 'its options could not be read';
+        } else {
+            $transport = (string) ($ps['transport'] ?? '');
+            $transport === 'smtp' || $missing[] = 'transport is ' . ($transport === '' ? 'unset' : "'$transport'") . ', not smtp';
+            // The class that really sends: Post SMTP falls back to its Default transport (the web server's local mail) when the SMTP
+            // one is not configured and ready, whatever the stored transport says.
+            $sending = (string) ($ps['active_transport'] ?? '');
+            $sending === 'PostmanSmtpModuleTransport' || $missing[] = 'the active transport is ' . ($sending === '' ? 'unknown' : $sending) . ', not PostmanSmtpModuleTransport (mail would not go through SMTP)';
+            empty($ps['sender_set']) && $missing[] = 'no sender (From) address: set SMTP_FROM';
+            empty($ps['envelope_set']) && $missing[] = 'no envelope sender: SMTP_FROM should fill it';
+            empty($ps['host_set']) && $missing[] = 'no SMTP host: set SMTP_HOST';
+            empty($ps['password_set']) && $missing[] = 'no SMTP password: set SMTP_PASSWORD';
+        }
+        $cmp('Post SMTP configured and ready', $missing === [], implode('; ', $missing), true);
+    }
+    $extra = array_values(array_diff($active, $expected, pkde_drift_seo_plugins(), ['contact-form-7', 'woocommerce', 'wps-hide-login', 'post-smtp', 'simple-cloudflare-turnstile']));
+    if ($extra !== []) {
+        $add('INFO', 'Other active plugins', implode(', ', $extra));
+    }
+
+    return $out;
+}
+
+/** Reads the facts from WordPress. Only reads; secrets are reduced to presence. */
+/** Rows in Relevanssi's index table (0 when the table does not exist yet). */
+function pkde_drift_relevanssi_indexed(): int
+{
+    global $wpdb;
+
+    $table = $wpdb->prefix . 'relevanssi';
+
+    if ($wpdb->get_var($wpdb->prepare('SHOW TABLES LIKE %s', $table)) !== $table) {
+        return 0;
+    }
+
+    return (int) $wpdb->get_var("SELECT COUNT(*) FROM `$table`");
+}
+
+/** Extended Protection facts: opted in (WORDFENCE_EXTENDED_PROTECTION in .env), the auto_prepend_file target in the docroot's .user.ini, and whether that file exists and includes the bootstrap. Paths are not printed. */
+function pkde_drift_waf_prepend_facts(): array
+{
+    $flag = strtolower(trim(pkde_env_setting('WORDFENCE_EXTENDED_PROTECTION')));
+    $facts = ['enabled' => in_array($flag, ['1', 'true', 'yes', 'on'], true), 'ini_target' => null, 'target_exists' => false, 'target_has_bootstrap' => false];
+
+    if (! $facts['enabled']) {
+        return $facts;
+    }
+
+    $facts['userini_status'] = pkde_drift_http(home_url('/.user.ini'))['status'];
+
+    foreach ([dirname(rtrim(ABSPATH, '/')), rtrim(ABSPATH, '/')] as $dir) {
+        $ini = $dir . '/.user.ini';
+        if (is_readable($ini) && preg_match("/^\\s*auto_prepend_file\\s*=\\s*'([^']+)'/m", (string) file_get_contents($ini), $m)) {
+            $facts['ini_target'] = $m[1];
+            $facts['target_exists'] = is_file($m[1]);
+            $facts['target_has_bootstrap'] = $facts['target_exists'] && str_contains((string) file_get_contents($m[1]), 'wordfence/waf/bootstrap.php');
+            break;
+        }
+    }
+
+    return $facts;
+}
+
+/**
+ * The shop filter declaration as the kit resolved it: whether the site declares its groups, the groups that resolved (sources, in the sidebar's order) and the
+ * declared sources that did not. Null when WooCommerce or a kit with the declaration is absent. Read only.
+ *
+ * @return array{declared: bool, groups: list<string>, invalid: list<string>}|null
+ */
+function pkde_drift_shop_filters_facts(): ?array
+{
+    if (! class_exists('App\\ShopFilters') || ! method_exists('App\\ShopFilters', 'invalidSources') || ! function_exists('wc_get_attribute_taxonomies')) {
+        return null;
+    }
+
+    return [
+        'declared' => \App\ShopFilters::config()['groups'] !== null,
+        'groups' => array_values(array_map(fn($g) => (string) $g['source'], \App\ShopFilters::groups())),
+        'invalid' => \App\ShopFilters::invalidSources(),
+    ];
+}
+
+/** An anonymous request to the user routes, dispatched inside WordPress (so staging's Basic auth and a firewall do not matter): the status codes only. */
+function pkde_drift_rest_users_probe(): array
+{
+    $previous = get_current_user_id();
+    wp_set_current_user(0);
+    $ids = get_users(['number' => 1, 'fields' => 'ID', 'has_published_posts' => true]);
+    $routes = ['list' => '/wp/v2/users', 'single' => $ids ? '/wp/v2/users/' . (int) $ids[0] : null];
+    $out = [];
+
+    foreach ($routes as $key => $route) {
+        $out[$key] = $route === null ? null : rest_do_request(new WP_REST_Request('GET', $route))->get_status();
+    }
+
+    wp_set_current_user($previous);
+
+    return $out;
+}
+
+/** Author archive facts: is the module loaded, how many users have published BLOG posts (post type post only: a shop manager who only owns pages or products has no author archive), how many of them hold no allowed role, how many users with an allowed role have a nicename (the archive slug) equal to their login. Counts only, no names. */
+function pkde_drift_author_archive(): array
+{
+    $module = function_exists('App\\MuPlugins\\author_has_allowed_role') && function_exists('App\\MuPlugins\\author_archive_allowed_roles');
+    $roles = $module ? \App\MuPlugins\author_archive_allowed_roles() : ['author'];
+    $users = get_users(['has_published_posts' => ['post'], 'fields' => ['ID']]);
+    $without = 0;
+
+    foreach ($users as $u) {
+        $user = get_userdata((int) $u->ID);
+        if (! $user || array_intersect($roles, (array) $user->roles) === []) {
+            $without++;
+        }
+    }
+
+    $allowed = $roles === [] ? [] : get_users(['role__in' => $roles, 'fields' => ['user_login', 'user_nicename']]);
+    $same = 0;
+
+    foreach ($allowed as $u) {
+        if (strcasecmp((string) $u->user_nicename, (string) $u->user_login) === 0) {
+            $same++;
+        }
+    }
+
+    return ['module' => $module, 'roles' => $roles, 'authors' => count($users), 'without_role' => $without, 'allowed_users' => count($allowed), 'slug_equals_login' => $same];
+}
+
+/** One GET to the site's own address: status, the X-Robots-Tag header (joined), the body. Never follows a redirect. */
+function pkde_drift_http(string $url): array
+{
+    $r = wp_remote_get($url, ['timeout' => 20, 'redirection' => 0, 'user-agent' => 'pkde-drift-check', 'headers' => ['Accept-Encoding' => 'identity']]);
+    if (is_wp_error($r)) {
+        return ['status' => 0, 'x_robots' => '', 'body' => ''];
+    }
+    $header = wp_remote_retrieve_header($r, 'x-robots-tag');
+    $type = wp_remote_retrieve_header($r, 'content-type');
+    $security = [];
+    foreach (['x-content-type-options', 'referrer-policy', 'x-frame-options', 'permissions-policy'] as $name) {
+        $value = wp_remote_retrieve_header($r, $name);
+        $security[$name] = is_array($value) ? implode(', ', $value) : (string) $value;
+    }
+
+    return ['status' => (int) wp_remote_retrieve_response_code($r), 'x_robots' => is_array($header) ? implode(', ', $header) : (string) $header, 'type' => is_array($type) ? implode(', ', $type) : (string) $type, 'security' => $security, 'body' => (string) wp_remote_retrieve_body($r)];
+}
+
+/**
+ * What search engines are told, as the site answers its own address: home, robots.txt, a static file, a faceted shop URL and the sitemap's
+ * entries. Counts and labels only; no body is kept except robots.txt (public) and the meta robots result.
+ */
+function pkde_drift_seo_probe(): array
+{
+    $out = ['home' => pkde_drift_http(home_url('/')), 'robots_txt' => pkde_drift_http(home_url('/robots.txt')), 'static' => pkde_drift_http(includes_url('images/blank.gif'))];
+    // Icons Apache must serve itself (a WordPress-served /favicon.ico boots PHP for every browser and bot) and the layered-nav flood rule.
+    $out['favicon'] = pkde_drift_http(home_url('/favicon.ico'));
+    $out['apple_touch'] = pkde_drift_http(home_url('/apple-touch-icon.png'));
+    $out['flood'] = pkde_drift_http(add_query_arg(['filter_pkdeprobe' => 'a,b', 'query_type_pkdeprobe' => 'or'], home_url('/')));
+    $out['favicon']['body'] = $out['apple_touch']['body'] = $out['flood']['body'] = '';
+    $out['home']['body'] = '';
+    $out['static']['body'] = '';
+
+    if (function_exists('wc_get_page_permalink') && ($shop = wc_get_page_permalink('shop'))) {
+        $p = pkde_drift_http(add_query_arg('orderby', 'price', $shop));
+        $out['faceted'] = ['status' => $p['status'], 'x_robots' => $p['x_robots'], 'meta_noindex' => preg_match('/<meta[^>]+name=["\']robots["\'][^>]+content=["\'][^"\']*noindex/i', $p['body']) === 1];
+    }
+
+    $index = pkde_drift_http(home_url('/sitemap_index.xml'));
+    $sitemap = ['status' => $index['status'], 'noindex' => []];
+    if ($index['status'] === 200) {
+        $locs = [];
+        preg_match_all('~<loc>\s*([^<\s]+)\s*</loc>~', $index['body'], $children);
+        foreach (array_slice($children[1], 0, 12) as $child) {
+            $c = pkde_drift_http(html_entity_decode($child));
+            if ($c['status'] === 200) {
+                preg_match_all('~<loc>\s*([^<\s]+)\s*</loc>~', $c['body'], $m);
+                $locs = array_merge($locs, array_slice($m[1], 0, 2000));
+            }
+        }
+        $pages = [];
+        foreach (['cart' => 'cart', 'checkout' => 'checkout', 'myaccount' => 'my-account'] as $key => $label) {
+            if (function_exists('wc_get_page_permalink') && ($link = wc_get_page_permalink($key))) {
+                $pages[untrailingslashit($link)] = $label;
+            }
+        }
+        foreach ($locs as $loc) {
+            $loc = html_entity_decode($loc);
+            if (isset($pages[untrailingslashit($loc)])) {
+                $sitemap['noindex'][] = $pages[untrailingslashit($loc)];
+            } elseif (str_contains($loc, '?')) {
+                $sitemap['noindex'][] = 'a query-string URL';
+            }
+        }
+        $sitemap['noindex'] = array_values(array_unique($sitemap['noindex']));
+    }
+    $out['sitemap'] = $sitemap;
+
+    return $out;
+}
+
+function pkde_drift_collect(): array
+{
+    $wfKeys = array_merge(array_keys(pkde_drift_wordfence_standard()), ['alertEmails']);
+    $wf = null;
+    if (class_exists('wfConfig')) {
+        $wf = [];
+        foreach ($wfKeys as $k) {
+            $wf[$k] = wfConfig::get($k);
+        }
+    }
+
+    $const = fn(string $name) => defined($name) ? trim((string) constant($name)) : '';
+    $keys = ($const('CF_TURNSTILE_SITE_KEY') !== '' && $const('CF_TURNSTILE_SECRET_KEY') !== '')
+        || (trim((string) get_option('cfturnstile_key')) !== '' && trim((string) get_option('cfturnstile_secret')) !== '');
+
+    $forms = [];
+    if (post_type_exists('wpcf7_contact_form')) {
+        foreach (get_posts(['post_type' => 'wpcf7_contact_form', 'post_status' => 'any', 'numberposts' => -1]) as $p) {
+            $mail = (array) get_post_meta($p->ID, '_mail', true);
+            $mail2 = (array) get_post_meta($p->ID, '_mail_2', true);
+            $forms[] = [
+                'id' => $p->ID,
+                'title' => (string) $p->post_title,
+                'key' => (string) get_post_meta($p->ID, '_pkde_form_key', true),
+                'headers' => (string) ($mail['additional_headers'] ?? ''),
+                'has_subject' => strpos((string) get_post_meta($p->ID, '_form', true), 'your-subject') !== false,
+                'subject' => (string) ($mail['subject'] ?? ''),
+                'mail2_active' => ! empty($mail2['active']),
+                'mail2_subject' => (string) ($mail2['subject'] ?? ''),
+            ];
+        }
+    }
+
+    $w3 = null;
+    if (class_exists('\\W3TC\\Dispatcher')) {
+        $config = \W3TC\Dispatcher::config();
+        $w3 = ['settings' => [], 'reject_cookies' => (array) $config->get_array('pgcache.reject.cookie'), 'reject_uris' => (array) $config->get_array('pgcache.reject.uri'), 'expected_sitemap' => home_url('/sitemap_index.xml')];
+        foreach (array_keys(pkde_w3tc_standard('')) as $k) {
+            $w3['settings'][$k] = $config->get($k);
+        }
+    }
+
+    $pageCache = null;
+    if ($w3 !== null) {
+        $dir = defined('W3TC_CACHE_PAGE_ENHANCED_DIR') ? W3TC_CACHE_PAGE_ENHANCED_DIR : WP_CONTENT_DIR . '/cache/page_enhanced';
+        $newest = 0;
+        $seen = 0;
+        if (is_dir($dir)) {
+            // The newest cached page (never more than 5000 files looked at: this is a check, not a crawl). Names: _index*.html, _index*.html_gzip.
+            foreach (new RecursiveIteratorIterator(new RecursiveDirectoryIterator($dir, FilesystemIterator::SKIP_DOTS)) as $file) {
+                if ($file->isFile() && str_starts_with($file->getFilename(), '_index')) {
+                    $newest = max($newest, $file->getMTime());
+                }
+                if (++$seen >= 5000) {
+                    break;
+                }
+            }
+        }
+        $pageCache = [
+            'wp_cache' => defined('WP_CACHE') && WP_CACHE,
+            'cron' => ['w3_pgcache_prime' => (bool) wp_next_scheduled('w3_pgcache_prime'), 'w3_pgcache_cleanup' => (bool) wp_next_scheduled('w3_pgcache_cleanup')],
+            'newest_age' => $newest ? time() - $newest : null,
+        ];
+    }
+
+    $active = array_map(fn($p) => dirname($p) === '.' ? basename($p, '.php') : dirname($p), (array) get_option('active_plugins', []));
+
+    return [
+        'env' => wp_get_environment_type(),
+        'wp_env' => $const('WP_ENV'),
+        'disallow_indexing' => defined('DISALLOW_INDEXING') && DISALLOW_INDEXING,
+        'staging_mail_to' => $const('STAGING_MAIL_TO') !== '' || trim((string) getenv('STAGING_MAIL_TO')) !== '',
+        'admin_email' => (string) get_option('admin_email'),
+        'wp_admin_email' => pkde_env_setting('WP_ADMIN_EMAIL'),
+        'alert_email_const' => pkde_env_setting('WORDFENCE_ALERT_EMAIL'),
+        'blogname' => (string) get_option('blogname'),
+        'blogdescription' => (string) get_option('blogdescription'),
+        'wordfence' => $wf,
+        'w3tc' => $w3,
+        'page_cache' => $pageCache,
+        'rankmath' => [
+            'skip' => (bool) get_option('rank_math_registration_skip'),
+            'connected' => ! empty(((array) get_option('rank_math_connect_data'))['api_key'] ?? ''),
+        ],
+        'relevanssi_indexed' => in_array('relevanssi', $active, true) ? pkde_drift_relevanssi_indexed() : null,
+        'author_archive' => pkde_drift_author_archive(),
+        'seo_probe' => pkde_drift_seo_probe(),
+        'rankmath_seo' => class_exists('\\RankMath\\Helper') ? ['titles' => (array) get_option('rank-math-options-titles', []), 'post_types' => array_values(array_filter(['page', 'post', 'product'], 'post_type_exists')), 'locale' => get_locale(), 'want_locale' => pkde_rankmath_wanted_locale()] : null,
+        'rest_users' => pkde_drift_rest_users_probe(),
+        'waf_prepend' => pkde_drift_waf_prepend_facts(),
+        'woocommerce_active' => in_array('woocommerce', $active, true),
+        'shop_filters' => pkde_drift_shop_filters_facts(),
+        'breadcrumbs' => pkde_drift_breadcrumb_facts(),
+        'cache_basket_visitors' => pkde_w3tc_cache_basket_visitors(),
+        'kit_cache_safe' => function_exists('App\\no_page_cache'),
+        'personal_views' => pkde_drift_personal_views(get_template_directory() . '/resources/views'),
+        'kit_overrides' => pkde_drift_kit_overrides(get_template_directory()),
+        'editor_settings' => pkde_drift_editor_settings_facts(),
+        'editor_catalog' => pkde_drift_editor_catalog_facts(),
+        'global_blocks' => pkde_drift_global_blocks_facts(),
+        'faq' => pkde_drift_faq_facts(),
+        'legal' => pkde_drift_legal_facts(),
+        'site_details' => pkde_drift_site_details_facts(),
+        'motion' => function_exists('App\\motion_mode') ? App\motion_mode() : null,
+        'shape' => pkde_drift_shape_facts(get_template_directory()),
+        'buttons' => pkde_drift_buttons_facts(get_template_directory()),
+        'turnstile' => [
+            'appearance' => get_option('cfturnstile_appearance', 'always'),
+            'login' => get_option('cfturnstile_login'),
+            'cf7_all' => get_option('cfturnstile_cf7_all'),
+            'tested' => get_option('cfturnstile_tested'),
+            'reset' => get_option('cfturnstile_reset'),
+            'keys_present' => $keys,
+        ],
+        'hide_login' => [
+            'active' => in_array('wps-hide-login', $active, true),
+            'slug' => (string) get_option('whl_page'),
+            // LOGIN_SLUG set, usable, and really in force (the platform's login-slug module answers get_option with it).
+            'managed' => $const('LOGIN_SLUG') !== '' && (string) get_option('whl_page') === sanitize_title_with_dashes($const('LOGIN_SLUG')),
+        ],
+        'cf7_forms' => $forms,
+        'cf7_key_usage' => pkde_drift_cf7_key_usage([get_template_directory() . '/resources/views', get_template_directory() . '/app']),
+        'cf7_active' => in_array('contact-form-7', $active, true),
+        'smtp_host_set' => $const('SMTP_HOST') !== '',
+        'post_smtp' => class_exists('PostmanOptions') ? (function () {
+            $o = PostmanOptions::getInstance();
+
+            $active = class_exists('PostmanTransportRegistry') ? PostmanTransportRegistry::getInstance()->getActiveTransport() : null;
+
+            return [
+                'transport' => (string) $o->getTransportType(),
+                'active_transport' => $active ? get_class($active) : '',
+                'sender_set' => trim((string) $o->getMessageSenderEmail()) !== '',
+                'envelope_set' => trim((string) $o->getEnvelopeSender()) !== '',
+                'host_set' => trim((string) $o->getHostname()) !== '',
+                'password_set' => (string) $o->getPassword() !== '',
+            ];
+        })() : null,
+        'active_plugins' => array_values($active),
+    ];
+}
+
+if (! function_exists('get_option')) {
+    return; // loaded without WordPress: only the pure functions are wanted
+}
+
+$pkdeFails = 0;
+foreach (pkde_drift_evaluate(pkde_drift_collect()) as [$status, $check, $detail]) {
+    echo str_pad($status, 5) . ' ' . $check . ($detail !== '' ? ': ' . $detail : '') . "\n";
+    $pkdeFails += $status === 'FAIL' ? 1 : 0;
+}
+echo $pkdeFails === 0 ? "\nNo drift against the template standard.\n" : "\n$pkdeFails check(s) FAILED.\n";
+
+if ($pkdeFails > 0) {
+    exit(1);
+}

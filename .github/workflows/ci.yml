@@ -3,6 +3,7 @@ name: CI
 on:
   push:
     branches: [main]
+    tags: ['20*']
   pull_request:
 
 permissions:
@@ -10,15 +11,19 @@ permissions:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7
         with:
           fetch-depth: 0   # the secret scan reads the whole history
           persist-credentials: false
 
+      # The reusable workflow and this workflow. .github/actionlint.yaml allows the ubuntu-26.04 label that actionlint does not know yet.
+      - name: Lint workflows (actionlint)
+        run: docker run --rm -v "$PWD":/repo -w /repo rhysd/actionlint:1.7.12@sha256:b1934ee5f1c509618f2508e6eb47ee0d3520686341fec936f3b79331f9315667 -color
+
       - name: Set up PHP
-        uses: shivammathur/setup-php@v2
+        uses: shivammathur/setup-php@eb7c497e18156a6bbabfef1d3a82760b9eda3962  # v2
         with:
           php-version: '8.3'
           tools: composer:v2
@@ -33,9 +38,44 @@ jobs:
       - name: Test (Pest)
         run: composer test
 
+      # Sandbox-tests activate-release.sh (first deploy, migrating live state into shared/, rollback, prune, missing .env),
+      # the deploy step of the reusable workflow against a throwaway sshd, the probe, the finder and the layout guard.
+      - name: Test the deploy tools
+        run: |
+          bash tests/deploy/activate-release.test.sh
+          bash tests/deploy/gate-curl.test.sh
+          bash tests/deploy/hit-workers.test.sh
+          bash tests/deploy/retry.test.sh
+          bash tests/deploy/assemble-artifact.test.sh
+          bash tests/deploy/workflow-hardening.test.sh
+          bash tests/deploy/edges.test.sh
+          bash tests/deploy/push-gh-secrets.test.sh
+          bash tests/deploy/composer-audit.test.sh
+          bash tests/deploy/check-site-paths.test.sh
+          bash tests/deploy/perf-probe.test.sh
+          bash tests/deploy/wp-find.test.sh
+          bash tests/deploy/fingerprint.test.sh
+          bash tests/deploy/fingerprint-normalise.test.sh
+          bash tests/deploy/seo-compare.test.sh
+          bash tests/deploy/seo-text-compare.test.sh
+          bash tests/deploy/seo-crawl.test.sh
+          python3 -m unittest discover -s tests/native
+          # Runs the real deploy step against a throwaway local sshd; needs sshd's privilege-separation directory.
+          sudo mkdir -p /run/sshd
+          bash tests/deploy/ssh-mux.test.sh
+
+      # A release tag must carry its own version in the reusable workflow: the tools are checked out at that stamp.
+      - name: The workflow is stamped with the tag
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          for wf in deploy audit; do
+            stamp="$(sed -n 's/^  PKDE_PLATFORM_VERSION: *//p' ".github/workflows/$wf.yml" | head -1 | tr -d ' ')"
+            [ "$stamp" = "$GITHUB_REF_NAME" ] || { echo "::error::$wf.yml PKDE_PLATFORM_VERSION is '$stamp' but the tag is '$GITHUB_REF_NAME'"; exit 1; }
+          done
+
       # Public repository: no secrets in any commit, ever. Needs no token; runs on forks' pull requests too, which only get read access.
       - name: Secret scan (gitleaks, full history)
-        run: docker run --rm -v "$PWD":/repo zricethezav/gitleaks:v8.30.1 git /repo --no-banner --redact
+        run: docker run --rm -v "$PWD":/repo zricethezav/gitleaks:v8.30.1@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f git /repo --no-banner --redact
 
       - name: Public-safety checks (no real emails, hosts, paths or keys)
         run: bash tests/public-safety.test.sh
