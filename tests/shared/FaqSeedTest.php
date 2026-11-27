@@ -3,7 +3,7 @@
 require_once __DIR__ . '/site-root.php';
 
 /**
- * WP-102: the demo page shows the FAQ block in group mode (a group "General" with three FAQs), the migration has a documented mapping file and a runbook.
+ * The demo page shows the FAQ block in group mode (a group "General" with three FAQs), the migration has a documented mapping file and a runbook.
  */
 $root = pkde_site_root();
 

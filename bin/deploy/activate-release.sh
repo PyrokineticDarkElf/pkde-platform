@@ -906,7 +906,11 @@ if [ -f "$WP_CLI" ]; then
     fi
 
     # Acorn's own caches (config, events, views) for the new release, when the theme has Acorn: its WP-CLI command exists only then.
+    # The caches are cleared first: a site that keeps Acorn's storage in shared/ (ACORN_STORAGE_PATH) would otherwise hand the new release the config and view caches the
+    # previous release wrote, with that release's paths in them, and the new caches then fail to build ("Unable to locate a class or view for component ..."). Reproduced
+    # with a cache written by another environment; clearing first builds them fresh every time.
     if wp_run cli has-command acorn >/dev/null 2>&1; then
+        run_wp acorn optimize:clear
         run_wp acorn optimize
     fi
 

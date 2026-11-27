@@ -102,6 +102,6 @@ it('imports the kit\'s editor stylesheet (kit.css and the editor width), so the 
     // the file itself ships in the kit and is checked there (EditorKitCssTest): the theme's vendor/ is not installed when CI runs these root tests
 });
 
-it('has no margin above the footer: a tinted last section would leave a strip of the page background (MDS-73)', function () {
+it('has no margin above the footer: a tinted last section would leave a strip of the page background (a real site)', function () {
     expect(themeFile('resources/views/sections/footer.blade.php'))->toMatch('/^<footer class="content-info bg-neutral-950/')->not->toMatch('/^<footer[^>]*\bmt-\d+/');
 });

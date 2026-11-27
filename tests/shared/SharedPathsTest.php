@@ -56,9 +56,9 @@ it('believes X-Forwarded-Proto from anyone unless TRUSTED_PROXIES is set, then o
 it('skips a trusted proxy entry with a missing or non-numeric prefix instead of reading it as /0 (everybody)', function () {
     $https = ['HTTP_X_FORWARDED_PROTO' => 'https', 'REMOTE_ADDR' => '203.0.113.9'];
 
-    expect(pkde_proxy_https($https, '10.0.0.0/'))->toBeFalse()
-        ->and(pkde_proxy_https($https, '10.0.0.0/x'))->toBeFalse()
-        ->and(pkde_proxy_https($https, '10.0.0.0/8x'))->toBeFalse()
-        ->and(pkde_proxy_https($https, '10.0.0.0/, 203.0.113.0/24'))->toBeTrue()
+    expect(pkde_proxy_https($https, '198.51.100.0/'))->toBeFalse()
+        ->and(pkde_proxy_https($https, '198.51.100.0/x'))->toBeFalse()
+        ->and(pkde_proxy_https($https, '198.51.100.0/8x'))->toBeFalse()
+        ->and(pkde_proxy_https($https, '198.51.100.0/, 203.0.113.0/24'))->toBeTrue()
         ->and(pkde_proxy_https($https, '203.0.113.0/0'))->toBeTrue(); // an explicit /0 is still what it says
 });

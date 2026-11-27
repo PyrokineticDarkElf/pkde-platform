@@ -466,6 +466,7 @@ check "an unknown mode exits 2" "[ $rc -eq 2 ] && grep -q 'must be all, activate
 touch $T/acorn-yes; mkrelease A8; : > $T/php83.log
 bash $S $BASE A8 3 >$T/s14e.log 2>&1
 check "acorn present: has-command acorn is asked and acorn optimize runs AFTER the flushes" "grep -q 'cli has-command acorn' $T/php83.log && [ \$(grep -n 'rewrite flush\|acorn optimize' $T/php83.log | cut -d: -f1 | tr '\n' ' ' | awk '{print (\$1<\$2) ? \"ordered\" : \"wrong\"}') = ordered ]"
+check "acorn present: the caches are cleared first, then built (optimize:clear before optimize)" "[ \$(grep -n 'acorn optimize:clear' $T/php83.log | head -1 | cut -d: -f1) -lt \$(grep -n 'acorn optimize\$' $T/php83.log | head -1 | cut -d: -f1) ]"
 rm -f $T/acorn-yes; mkrelease A9; : > $T/php83.log
 bash $S $BASE A9 3 >$T/s14f.log 2>&1
 check "acorn absent: acorn optimize does not run" "grep -q 'cli has-command acorn' $T/php83.log && ! grep -q 'acorn optimize' $T/php83.log"
