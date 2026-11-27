@@ -2,7 +2,7 @@
 
 /**
  * Plugin Name: Admin email notice
- * Description: A site keeps its admin email in .env as WP_ADMIN_EMAIL (1Password holds the .env, WP-87) and the deploy's drift check fails when the
+ * Description: A site keeps its admin email in .env as WP_ADMIN_EMAIL (1Password holds the .env) and the deploy's drift check fails when the
  *              WordPress option differs. This only warns, on Settings > General, to administrators: nothing overrides admin_email and nothing is
  *              written. No address is printed. Does nothing unless WP_ADMIN_EMAIL is set to a valid address.
  */

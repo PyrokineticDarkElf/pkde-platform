@@ -3,7 +3,7 @@
 /**
  * Plugin Name: REST users endpoints for editors only
  * Description: WordPress answers an anonymous GET /wp-json/wp/v2/users (and /users/<id>) with the slug and name of every user who has published a post, which is
- *              user enumeration (WP-88). Wordfence's "Prevent discovery of usernames" closes it, but only where Wordfence is active (not on staging) and only while
+ *              user enumeration. Wordfence's "Prevent discovery of usernames" closes it, but only where Wordfence is active (not on staging) and only while
  *              the option is on. This module removes the two routes for everyone who cannot use them: the routes exist only for a logged-in user who can
  *              `list_users` or `edit_posts` (the block editor's author picker, Application Passwords of an editor, wp-admin). For anyone else the endpoint is
  *              not found (404 rest_no_route), in every environment, independently of Wordfence. Nothing else changes: post responses still carry the author's

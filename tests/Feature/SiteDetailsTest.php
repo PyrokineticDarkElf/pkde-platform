@@ -1,7 +1,7 @@
 <?php
 
 /**
- * The site-details module (WP-106): the pure parts. The screen, the roles and Rank Math are proved in a real WordPress on the template stack.
+ * The site-details module: the pure parts. The screen, the roles and Rank Math are proved in a real WordPress on the template stack.
  */
 require_once dirname(__DIR__, 2) . '/modules/site-details/site-details.php';
 

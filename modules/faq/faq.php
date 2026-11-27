@@ -2,7 +2,7 @@
 
 /**
  * Plugin Name: FAQs
- * Description: Frequently asked questions as their own, non-public content (WP-102). One question and its answer per FAQ, shown on a page by the kit's FAQ block by GROUP.
+ * Description: Frequently asked questions as their own, non-public content. One question and its answer per FAQ, shown on a page by the kit's FAQ block by GROUP.
  *               - the post type `pkde_faq`: no URL, no archive, no search, no sitemap (public false, rewrite false); the question is the title and the answer is the content,
  *                 written with paragraphs, lists, h3/h4 headings and bold, italic and links only; its own "FAQs" admin menu; revisions;
  *               - the taxonomy `pkde_faq_group`: many groups per FAQ, an admin column and a filter on the FAQs list, a description per group;
@@ -183,7 +183,7 @@ function faq_seo_caps(array $editorCaps, bool $rankMath): array
     return $caps;
 }
 
-// The one FAQPage JSON-LD of a page (WP-105, phase 1, moved out of the theme kit): the kit's FAQ block adds its questions here (faq_schema_add()), the page prints one FAQPage
+// The one FAQPage JSON-LD of a page (phase 1, moved out of the theme kit): the kit's FAQ block adds its questions here (faq_schema_add()), the page prints one FAQPage
 // from all of them in the footer, de-duplicated by question; skipped when the site turns it off (filter `pkde_kit/faq_schema`) or Rank Math's own FAQ block is on the page.
 // Defines PKDE_PLATFORM_FAQ_SCHEMA, which the kit looks for; PKDE_PLATFORM_DISABLE=faq switches the whole module off and the kit's copy runs again.
 if (! defined('PKDE_PLATFORM_FAQ_SCHEMA')) {

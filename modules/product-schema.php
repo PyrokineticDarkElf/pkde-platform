@@ -2,8 +2,8 @@
 
 /**
  * Plugin Name: Product structured data that matches the shop
- * Description: Rank Math writes the Product schema; this corrects what it gets wrong for a shop and adds what it leaves out, from the store's own settings, never invented (WP-91,
- *              TPL-179; moved out of the theme kit, WP-105 phase 1, so a theme switch no longer makes the Merchant Center price differ from the page):
+ * Description: Rank Math writes the Product schema; this corrects what it gets wrong for a shop and adds what it leaves out, from the store's own settings, never invented (
+ *moved out of the theme kit, so a theme switch no longer makes the Merchant Center price differ from the page):
  *               - Price: the price a shopper sees (the "Display prices in the shop" setting, including or excluding tax) instead of the stored price;
  *               - Brand: when Rank Math has none, the product's own `product_brand` term; a store that sells under one name returns it from the filter `pkde_kit/product_brand`;
  *               - shippingDetails: only when the store's shipping zone for its base country has a free-shipping or numeric flat-rate method and the product is physical with no
@@ -21,7 +21,7 @@ if (! defined('PKDE_PLATFORM_PRODUCT_SCHEMA')) {
 }
 
 /**
- * The Product schema offers with the prices a shopper SEES (WP-91, S-1): Rank Math prints the stored price, so a shop that displays prices with tax
+ * The Product schema offers with the prices a shopper SEES (S-1): Rank Math prints the stored price, so a shop that displays prices with tax
  * (or without) while it stores them the other way round showed one price on the page and another in the markup. Offer: price, and the price and
  * valueAddedTaxIncluded of its priceSpecification. AggregateOffer: lowPrice and highPrice. A price that is null is left as Rank Math printed it.
  *

@@ -2,7 +2,7 @@
 
 /**
  * Plugin Name: Legal documents
- * Description: Privacy, cookies, terms and the like as their own content, not as pages (WP-104). One document per policy, at the root address it has today.
+ * Description: Privacy, cookies, terms and the like as their own content, not as pages. One document per policy, at the root address it has today.
  *               - the post type `pkde_legal`: public, indexable, in the sitemaps (core's, and Rank Math's once its switch is turned on for the type), out of the site search, title and editor and revisions, its own "Legal" admin menu, no archive;
  *               - the URL is `/<slug>/`, with no base: a PAGE with that slug always wins (a document that would clash is kept as a draft, with a notice, and the other way round), and
  *                 posts, products, product categories and the shop keep their own addresses (only a request that would otherwise be a missing page is looked up as a document);

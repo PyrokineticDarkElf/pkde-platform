@@ -1,7 +1,7 @@
 <?php
 
 /**
- * The legal module (WP-104): the pure parts. The post type, the address, the roles, core and WooCommerce are proved in a real WordPress on the template stack.
+ * The legal module: the pure parts. The post type, the address, the roles, core and WooCommerce are proved in a real WordPress on the template stack.
  */
 require_once dirname(__DIR__, 2) . '/modules/legal/legal.php';
 

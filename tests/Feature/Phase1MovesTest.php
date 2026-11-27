@@ -1,6 +1,6 @@
 <?php
 
-// WP-105, phase 1: the behaviours moved out of the theme kit into modules. The pure functions are tested here (the kit's own tests cover the copies it still has); the hooks are
+//phase 1: the behaviours moved out of the theme kit into modules. The pure functions are tested here (the kit's own tests cover the copies it still has); the hooks are
 // proved on a real WordPress. WordPress is stood in for by two global functions where a module asks for it.
 $modules = dirname(__DIR__, 2) . '/modules';
 
